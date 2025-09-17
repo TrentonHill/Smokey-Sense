@@ -141,9 +141,23 @@ public class Overlay : Form
     private int GetToggleKeyCode()  // Get key code based on setting
     {
         string key = Functions.AimAssistToggleKey;
-        if (key == "Right_Shift") return VK_RSHIFT;
-        if (key == "Left_Shift") return VK_LSHIFT;
-        return VK_LSHIFT;  // Default
+
+        // Gestion spéciale pour certains alias courants
+        if (string.Equals(key, "Right_Shift", StringComparison.OrdinalIgnoreCase)) return VK_RSHIFT;
+        if (string.Equals(key, "Left_Shift", StringComparison.OrdinalIgnoreCase)) return VK_LSHIFT;
+        if (string.Equals(key, "Caps_Lock", StringComparison.OrdinalIgnoreCase)) return (int)Keys.CapsLock;
+
+        // Essaye de parser le nom de la touche via l'énum Keys
+        try
+        {
+            Keys parsedKey = (Keys)Enum.Parse(typeof(Keys), key, true);
+            return (int)parsedKey;
+        }
+        catch
+        {
+            // Si la conversion échoue, fallback sur Left Shift
+            return VK_LSHIFT;
+        }
     }
 
     private bool IsToggleKeyPressedFallback()  // Fallback key check
@@ -159,7 +173,7 @@ public class Overlay : Form
     {
         base.OnPaint(e);
         Graphics g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.SmoothingMode = (SmoothingMode)Functions.SmoothingMode;
 
         // Update pen if needed
         if (espPen == null || espPen.Color != Functions.SelectedColor || espPen.Width != Functions.ESPThickness)
@@ -245,9 +259,24 @@ public class Overlay : Form
 
         if (Functions.AimAssistEnabled && aimToggle && closestTarget != null) // Way too humanized lmfao
         {
-            Vector2 targetHead = closestTarget.head2D;
-            targetHead.Y -= 4f + (float)rand.NextDouble() * 2f;  // Humanize aim point
-            Vector2 delta = targetHead - screenCenter;
+            Vector2 targetPoint;
+
+            // Utilisation du bone configuré si possible, sinon fallback sur head2D
+            if (closestTarget.bones2D != null
+                && Functions.AimBoneId >= 0
+                && Functions.AimBoneId < closestTarget.bones2D.Count)
+            {
+                targetPoint = closestTarget.bones2D[Functions.AimBoneId];
+            }
+            else
+            {
+                targetPoint = closestTarget.head2D;
+            }
+
+            // Humanize aim point
+            targetPoint.Y -= 4f + (float)rand.NextDouble() * 2f;
+
+            Vector2 delta = targetPoint - screenCenter;
             float deltaLen = delta.Length();
             float angle = (float)Math.Atan2(delta.Y, delta.X);
 

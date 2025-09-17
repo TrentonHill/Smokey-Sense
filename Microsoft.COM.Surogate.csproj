@@ -60,6 +60,7 @@
     <Compile Include="Data\EntityManager.cs" />
     <Compile Include="Data\Memory.cs" />
     <Compile Include="Data\Offsets.cs" />
+    <Compile Include="Modules\ConfigFile.cs" />
     <Compile Include="Modules\Functions.cs" />
     <Compile Include="Modules\OffsetGrabber.cs" />
     <Compile Include="Overlay.cs">
