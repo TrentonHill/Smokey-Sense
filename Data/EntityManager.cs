@@ -39,6 +39,7 @@ public class EntityManager
     private Entity localPlayer;  // Local player entity
     private List<Entity> entities;  // List of all entities
     private float[] cachedViewMatrix;  // Cached view matrix for W2S
+    private int[] boneIndices;  // Indices of bones to read
 
     public Entity LocalPlayer  // Thread safe getter for local player
     {
@@ -68,6 +69,7 @@ public class EntityManager
         localPlayer = new Entity();
         entities = new List<Entity>();
         cachedViewMatrix = new float[16];
+        boneIndices = (int[])Enum.GetValues(typeof(BoneIds));
     }
 
     public Entity GetLocalPlayer()  // Fetch local player data
@@ -232,8 +234,7 @@ public class EntityManager
         try
         {
             byte[] buffer = memory.ReadBytes(boneArray, 896);  // Bone data size
-            List<Vector3> boneList = new List<Vector3>();
-            int[] boneIndices = { 0, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19, 20, 23, 24, 26, 27 };
+            List<Vector3> boneList = new List<Vector3>(boneIndices.Length);
 
             foreach (int idx in boneIndices)
             {
