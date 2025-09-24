@@ -35,6 +35,11 @@ internal static class Program
 
         try
         {
+            bool countNumberofReads = true;
+            Functions.LoadConfig();
+            Functions.StartConfigWatcher();
+            Application.ApplicationExit += (s, e) => Functions.StopConfigWatcher();
+
             Console.WriteLine("[i]: Initializing memory for CS2...");
             Memory memory = new Memory();
             EntityManager entityManager = new EntityManager(memory);
@@ -47,6 +52,8 @@ internal static class Program
             // Background thread for entity updates
             Thread updateThread = new Thread(() =>
             {
+                Stopwatch swReadCountPerSec = countNumberofReads ? Stopwatch.StartNew() :null;
+                long readsCounter = 0;
                 Stopwatch sw = Stopwatch.StartNew();
                 while (true)
                 {
@@ -66,8 +73,19 @@ internal static class Program
                         Entity local = entityManager.GetLocalPlayer();
                         entityManager.UpdateLocalPlayer(local);
                         entityManager.UpdateEntities(entities);
+                        if (countNumberofReads)
+                        {
+                            readsCounter++;
+                            if (swReadCountPerSec.ElapsedMilliseconds >= 1000)
+                            {
+                                swReadCountPerSec.Restart();
+                                Console.WriteLine ( $"Reads/s: {readsCounter}");
+                                readsCounter = 0;
+                            }
+                        }
+
                         long elapsedMs = (sw.ElapsedTicks / 10000) - startMs;
-                        int targetMs = 16;
+                        int targetMs = 7;
                         if (elapsedMs < targetMs) Thread.Sleep(targetMs - (int)elapsedMs);
                     }
                     else

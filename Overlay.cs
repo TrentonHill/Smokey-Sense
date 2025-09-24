@@ -2,7 +2,9 @@
 // It's a transparent topmost window using GDI for drawing.
 // I have a custom keyboard hook for toggle detection and used mouse_event for aim movement.
 // Note: ESP is super laggy in online matches and kills FPS but fine in private matches, will optimize asap.. im working on it!
-
+using Microsoft.COM.Surogate;
+using Microsoft.COM.Surogate.Data;
+using Microsoft.COM.Surogate.Modules;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -13,9 +15,6 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
-using Microsoft.COM.Surogate;
-using Microsoft.COM.Surogate.Data;
-using Microsoft.COM.Surogate.Modules;
 
 public class Overlay : Form
 {
@@ -46,6 +45,14 @@ public class Overlay : Form
     private const int VK_LSHIFT = 160;
     private const uint MOUSEEVENTF_MOVE = 1u;
 
+    // Settings for debug
+    private bool debugBoneName = false;
+    private bool debugBoneIndex = true;
+
+    Stopwatch fpsTimer = Stopwatch.StartNew();
+    int fpsCounter = 0;
+
+
     // DLL imports
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
@@ -73,13 +80,15 @@ public class Overlay : Form
 
     public Overlay(Memory memory, EntityManager entityManager)  // Constructor
     {
+        
+
         InitializeComponent();
         this.memory = memory;
         this.entityManager = entityManager;
         DoubleBuffered = true;
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
 
-        renderTimer = new System.Windows.Forms.Timer { Interval = 16 };
+        renderTimer = new System.Windows.Forms.Timer { Interval = 4 };
         renderTimer.Tick += (s, e) => Invalidate();
 
         if (Functions.BoxESPEnabled || Functions.BoneESPEnabled || Functions.AimAssistEnabled)
@@ -141,9 +150,23 @@ public class Overlay : Form
     private int GetToggleKeyCode()  // Get key code based on setting
     {
         string key = Functions.AimAssistToggleKey;
-        if (key == "Right_Shift") return VK_RSHIFT;
-        if (key == "Left_Shift") return VK_LSHIFT;
-        return VK_LSHIFT;  // Default
+
+        // Gestion spéciale pour certains alias courants
+        if (string.Equals(key, "Right_Shift", StringComparison.OrdinalIgnoreCase)) return VK_RSHIFT;
+        if (string.Equals(key, "Left_Shift", StringComparison.OrdinalIgnoreCase)) return VK_LSHIFT;
+        if (string.Equals(key, "Caps_Lock", StringComparison.OrdinalIgnoreCase)) return (int)Keys.CapsLock;
+
+        // Essaye de parser le nom de la touche via l'énum Keys
+        try
+        {
+            Keys parsedKey = (Keys)Enum.Parse(typeof(Keys), key, true);
+            return (int)parsedKey;
+        }
+        catch
+        {
+            // Si la conversion échoue, fallback sur Left Shift
+            return VK_LSHIFT;
+        }
     }
 
     private bool IsToggleKeyPressedFallback()  // Fallback key check
@@ -157,9 +180,17 @@ public class Overlay : Form
 
     protected override void OnPaint(PaintEventArgs e)  // Drawing logic
     {
+        fpsCounter++;
+        if (fpsTimer.ElapsedMilliseconds >= 1000)
+        {
+           Console.WriteLine($"[i]: Overlay FPS: {fpsCounter}");
+            fpsTimer.Restart();
+            fpsCounter=0;
+        }
+
         base.OnPaint(e);
         Graphics g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.SmoothingMode = (SmoothingMode)Functions.SmoothingMode;
 
         // Update pen if needed
         if (espPen == null || espPen.Color != Functions.SelectedColor || espPen.Width != Functions.ESPThickness)
@@ -219,6 +250,14 @@ public class Overlay : Form
                             !float.IsNaN(p1.X) && !float.IsNaN(p1.Y) && !float.IsNaN(p2.X) && !float.IsNaN(p2.Y))
                         {
                             g.DrawLine(espPen, p1.X, p1.Y, p2.X, p2.Y);
+                            // Draw bone index until i figure out what s wrong in aim bone selection
+                            if (debugBoneIndex || debugBoneName)
+                            {
+                                string bonename = debugBoneName ? Enum.GetValues(typeof(EntityManager.BoneIds)).GetValue(i).ToString() : string.Empty;
+
+                                var brush = new SolidBrush(i == Functions.AimBoneId ? Color.Green : Color.Bisque);
+                                g.DrawString(i.ToString() + " " + bonename, DefaultFont, brush, (p1.X + p2.X) / 2, (p1.Y + p2.Y) / 2);
+                            }
                         }
                     }
                 }
@@ -245,9 +284,28 @@ public class Overlay : Form
 
         if (Functions.AimAssistEnabled && aimToggle && closestTarget != null) // Way too humanized lmfao
         {
-            Vector2 targetHead = closestTarget.head2D;
-            targetHead.Y -= 4f + (float)rand.NextDouble() * 2f;  // Humanize aim point
-            Vector2 delta = targetHead - screenCenter;
+            Vector2 targetPoint;
+
+            // Utilisation du bone configuré si possible, sinon fallback sur head2D
+            if (closestTarget.bones2D != null
+                && Functions.AimBoneId >= 0
+                && Functions.AimBoneId < closestTarget.bones2D.Count)
+            {
+                targetPoint = closestTarget.bones2D[Functions.AimBoneId];
+            }
+            else
+            {
+                targetPoint = closestTarget.head2D;
+            }
+
+            // Humanize aim point
+            targetPoint.Y -= 4f + (float)rand.NextDouble() * 2f;
+
+            // // Debug draw target point
+            // var brush = new SolidBrush( Color.Turquoise );
+            // g.DrawString("x", DefaultFont, brush, targetPoint.X, targetPoint.Y);
+
+            Vector2 delta = targetPoint - screenCenter;
             float deltaLen = delta.Length();
             float angle = (float)Math.Atan2(delta.Y, delta.X);
 
