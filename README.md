@@ -40,7 +40,7 @@ If you prefer to build locally, follow the steps in the Installation / Building 
 
 ![UI Screenshot](https://i.imgur.com/BEEUYkF.png)
 
-### In-Game ESP (Aim Assist is disabled by default)
+### In Game ESP
 
 ![In Game Screenshot](https://i.imgur.com/K51xhY3.jpeg)
 
@@ -66,7 +66,7 @@ You can either download a prebuilt release from the Releases page or build local
 ### Clone the Repo
 
 ```bash
-git clone https://github.com/yourusername/SmokeySense.git
+git clone https://github.com/TrentonHill/Smokey-Sense
 ```
 
 ### Build (Local)
