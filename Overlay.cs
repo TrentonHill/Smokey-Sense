@@ -1,64 +1,76 @@
-﻿// This is the overlay form that draws ESP and handles aim assist.
-// It's a transparent topmost window using GDI for drawing.
-// I have a custom keyboard hook for toggle detection and used mouse_event for aim movement.
-// Note: ESP is super laggy in online matches and kills FPS but fine in private matches, will optimize asap.. im working on it!
-
+﻿using Microsoft.COM.Surogate;
+using Microsoft.COM.Surogate.Data;
+using SharpDX;
+using SharpDX.D3DCompiler;
+using SharpDX.Direct3D;
+using SharpDX.Direct3D11;
+using SharpDX.DXGI;
+using SharpDX.Mathematics.Interop;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
-using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
-using System.Windows.Forms;
-using Microsoft.COM.Surogate;
-using Microsoft.COM.Surogate.Data;
-using Microsoft.COM.Surogate.Modules;
+using Buffer = SharpDX.Direct3D11.Buffer;
+using Device = SharpDX.Direct3D11.Device;
+using NumericsVector2 = System.Numerics.Vector2;
+using NumericsVector3 = System.Numerics.Vector3;
+using SharpDXVector3 = SharpDX.Vector3;
 
-public class Overlay : Form
+public class Overlay : IDisposable
 {
-    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);  // Keyboard hook delegate
-    private readonly Memory memory;  // Memory reader
-    private readonly EntityManager entityManager;  // Entity manager
-    private readonly System.Windows.Forms.Timer renderTimer;  // Timer for rendering
-    private Pen espPen;  // Pen for drawing ESP
-    private IntPtr keyboardHookId = IntPtr.Zero;  // Hook ID
-    private bool toggleKeyPressed;  // Toggle state
-    private LowLevelKeyboardProc keyboardProcDelegate;  // Delegate instance
-    private static Vector2 previousDelta = Vector2.Zero;  // For aim smoothing
-    private static Vector2 currentVelocity = Vector2.Zero;  // Velocity for aim
-    private static readonly Random rand = new Random();  // Random for humanization
-    private static DateTime lastShotTime = DateTime.Now;  // Track shots (not used yet)
-    private static Entity lastTarget = null;  // Last aim target
-    private static DateTime targetLockStart = DateTime.Now;  // Target lock time
-    private IContainer components;  // Designer stuff
+    private readonly Memory memory;
+    private readonly EntityManager entityManager;
+    private static NumericsVector2 previousDelta = NumericsVector2.Zero;
+    private static NumericsVector2 currentVelocity = NumericsVector2.Zero;
+    private static readonly Random rand = new Random();
+    private static Entity lastTarget = null;
+    private static DateTime targetLockStart = DateTime.Now;
+    private Device d3dDevice;
+    private DeviceContext deviceContext;
+    private SwapChain swapChain;
+    private RenderTargetView renderTargetView;
+    private IntPtr hWnd;
+    private bool running;
+    private Buffer vertexBuffer;
+    private VertexShader vertexShader;
+    private PixelShader pixelShader;
+    private InputLayout inputLayout;
+    private readonly WndProc wndProcDelegate;
+    private RasterizerState rasterizerState;
+    private BlendState blendState;
 
-    // Constants for window styles and hooks
-    private const int GWL_EXSTYLE = -20;
-    private const int WS_EX_LAYERED = 524288;
-    private const int WS_EX_TRANSPARENT = 32;
+    private const int WS_EX_LAYERED = 0x80000;
+    private const int WS_EX_TRANSPARENT = 0x20;
+    private const int WS_EX_TOPMOST = 0x8;
+    private const int WS_EX_NOACTIVATE = 0x08000000;
+    private const int WS_POPUP = unchecked((int)0x80000000);
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 256;
     private const int WM_KEYUP = 257;
     private const int VK_RSHIFT = 161;
     private const int VK_LSHIFT = 160;
     private const uint MOUSEEVENTF_MOVE = 1u;
+    private const uint LWA_ALPHA = 0x2;
+    private const uint WM_DESTROY = 0x0002;
+    private const uint WM_CLOSE = 0x0010;
 
-    // DLL imports
     [DllImport("user32.dll")]
-    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+    private static extern IntPtr CreateWindowEx(int dwExStyle, string lpClassName, string lpWindowName, int dwStyle, int x, int y, int nWidth, int nHeight, IntPtr hWndParent, IntPtr hMenu, IntPtr hInstance, IntPtr lpParam);
     [DllImport("user32.dll")]
-    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+    private static extern bool DestroyWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    private static extern bool RegisterClass(ref WNDCLASS wndClass);
+    [DllImport("user32.dll")]
+    private static extern IntPtr DefWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
     [DllImport("user32.dll")]
     private static extern short GetKeyState(int vKey);
     [DllImport("user32.dll")]
     private static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool UnhookWindowsHookEx(IntPtr hhk);
@@ -70,234 +82,546 @@ public class Overlay : Form
     private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("user32.dll")]
+    private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
+    [DllImport("user32.dll")]
+    private static extern bool PostQuitMessage(int nExitCode);
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS pMarInset);
 
-    public Overlay(Memory memory, EntityManager entityManager)  // Constructor
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WNDCLASS
     {
-        InitializeComponent();
+        public uint style;
+        public IntPtr lpfnWndProc;
+        public int cbClsExtra;
+        public int cbWndExtra;
+        public IntPtr hInstance;
+        public IntPtr hIcon;
+        public IntPtr hCursor;
+        public IntPtr hbrBackground;
+        public string lpszMenuName;
+        public string lpszClassName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MARGINS
+    {
+        public int cxLeftWidth;
+        public int cxRightWidth;
+        public int cyTopHeight;
+        public int cyBottomHeight;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Vertex
+    {
+        public SharpDXVector3 Position;
+        public RawColorBGRA Color;
+    }
+
+    private delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    private IntPtr CustomWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        switch (msg)
+        {
+            case WM_DESTROY:
+            case WM_CLOSE:
+                running = false;
+                Dispose();
+                PostQuitMessage(0);
+                return IntPtr.Zero;
+            default:
+                return DefWindowProc(hWnd, msg, wParam, lParam);
+        }
+    }
+
+    public Overlay(Memory memory, EntityManager entityManager)
+    {
         this.memory = memory;
         this.entityManager = entityManager;
-        DoubleBuffered = true;
-        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        running = true;
 
-        renderTimer = new System.Windows.Forms.Timer { Interval = 16 };
-        renderTimer.Tick += (s, e) => Invalidate();
-
-        if (Functions.BoxESPEnabled || Functions.BoneESPEnabled || Functions.AimAssistEnabled)
-            renderTimer.Start();
-
-        // Subscribe to setting changes
-        Functions.BoxESPEnabledChanged += OnFeatureEnabledChanges;
-        Functions.BoneESPEnabledChanged += OnFeatureEnabledChanges;
-        Functions.AimAssistEnabledChanged += OnFeatureEnabledChanges;
-
-        // Set up keyboard hook
-        Console.WriteLine("[i]: Initializing keyboard hook for CS2...");
-        keyboardProcDelegate = KeyboardProc;
-        Process process = Process.GetCurrentProcess();
-        ProcessModule mainModule = process.MainModule;
-        keyboardHookId = SetWindowsHookEx(WH_KEYBOARD_LL, keyboardProcDelegate, GetModuleHandle(mainModule.ModuleName), 0u);
-        if (keyboardHookId == IntPtr.Zero)
-            Console.WriteLine($"[i]: Keyboard hook failed, error: {Marshal.GetLastWin32Error()}");
-    }
-
-    private IntPtr KeyboardProc(int nCode, IntPtr wParam, IntPtr lParam)  // Hook callback
-    {
-        if (nCode >= 0 && Functions.AimAssistEnabled)
+        wndProcDelegate = CustomWndProc;
+        WNDCLASS wndClass = new WNDCLASS
         {
-            int vkCode = Marshal.ReadInt32(lParam);
-            int toggleKey = GetToggleKeyCode();
-            bool isDown = wParam == (IntPtr)WM_KEYDOWN;
-            if (vkCode == toggleKey)
-                toggleKeyPressed = isDown;
+            style = 0,
+            lpfnWndProc = Marshal.GetFunctionPointerForDelegate(wndProcDelegate),
+            hInstance = GetModuleHandle(null),
+            lpszClassName = "CS2Overlay"
+        };
+        RegisterClass(ref wndClass);
+
+        System.Windows.Forms.Screen screen = System.Windows.Forms.Screen.PrimaryScreen;
+        hWnd = CreateWindowEx(
+            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            "CS2Overlay",
+            "Microsoft.COM.Surogate",
+            WS_POPUP,
+            screen.Bounds.Left, screen.Bounds.Top, screen.Bounds.Width, screen.Bounds.Height,
+            IntPtr.Zero, IntPtr.Zero, wndClass.hInstance, IntPtr.Zero
+        );
+        if (hWnd == IntPtr.Zero)
+        {
+            Console.WriteLine($"[ERROR]: Initializing Overlay Failed, Error: {Marshal.GetLastWin32Error()}");
+            Thread.Sleep(5000);
+            Environment.Exit(1);
         }
-        return CallNextHookEx(keyboardHookId, nCode, wParam, lParam);
-    }
+        MARGINS margins = new MARGINS { cxLeftWidth = -1, cxRightWidth = -1, cyTopHeight = -1, cyBottomHeight = -1 };
+        DwmExtendFrameIntoClientArea(hWnd, ref margins);
+        SetLayeredWindowAttributes(hWnd, 0, 255, LWA_ALPHA);
+        ShowWindow(hWnd, 5);
+        Console.Write(" (✓)\n");
 
-    private void OnFeatureEnabledChanges(object sender, EventArgs e)  // Handle feature toggles
-    {
-        if (Functions.BoxESPEnabled || Functions.BoneESPEnabled || Functions.AimAssistEnabled)
+        Console.Write("[i]: Initializing Drawing API!");
+        GetClientRect(hWnd, out RECT clientRect);
+        var swapChainDesc = new SwapChainDescription
         {
-            renderTimer.Start();
-            Invalidate();
-        }
-        else
+            BufferCount = 1,
+            ModeDescription = new ModeDescription(clientRect.Right - clientRect.Left, clientRect.Bottom - clientRect.Top, new Rational(60, 1), Format.R8G8B8A8_UNorm),
+            IsWindowed = true,
+            OutputHandle = hWnd,
+            SampleDescription = new SampleDescription(1, 0),
+            SwapEffect = SwapEffect.Discard,
+            Usage = Usage.RenderTargetOutput
+        };
+
+        Device.CreateWithSwapChain(
+            DriverType.Hardware,
+            DeviceCreationFlags.None,
+            swapChainDesc,
+            out d3dDevice,
+            out swapChain
+        );
+        deviceContext = d3dDevice.ImmediateContext;
+
+        using (var backBuffer = swapChain.GetBackBuffer<Texture2D>(0))
         {
-            renderTimer.Stop();
-            Invalidate();
-        }
-    }
-
-    private void Overlay_Load(object sender, EventArgs e)  // Form load - set up overlay
-    {
-        FormBorderStyle = FormBorderStyle.None;
-        TopMost = true;
-        BackColor = Color.White;
-        TransparencyKey = Color.White;
-        Bounds = Screen.PrimaryScreen.Bounds;
-        int exStyle = GetWindowLong(Handle, GWL_EXSTYLE);
-        SetWindowLong(Handle, GWL_EXSTYLE, exStyle | WS_EX_LAYERED | WS_EX_TRANSPARENT);
-    }
-
-    private int GetToggleKeyCode()  // Get key code based on setting
-    {
-        string key = Functions.AimAssistToggleKey;
-        if (key == "Right_Shift") return VK_RSHIFT;
-        if (key == "Left_Shift") return VK_LSHIFT;
-        return VK_LSHIFT;  // Default
-    }
-
-    private bool IsToggleKeyPressedFallback()  // Fallback key check
-    {
-        int toggleKey = GetToggleKeyCode();
-        short asyncState = GetAsyncKeyState(toggleKey);
-        short keyState = GetKeyState(toggleKey);
-        bool capsLock = Control.IsKeyLocked(Keys.Capital) && Functions.AimAssistToggleKey == "Caps_Lock";
-        return ((asyncState & 0x8000) != 0) || ((keyState & 0x8000) != 0) || capsLock;
-    }
-
-    protected override void OnPaint(PaintEventArgs e)  // Drawing logic
-    {
-        base.OnPaint(e);
-        Graphics g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-
-        // Update pen if needed
-        if (espPen == null || espPen.Color != Functions.SelectedColor || espPen.Width != Functions.ESPThickness)
-            espPen = new Pen(Functions.SelectedColor, Functions.ESPThickness);
-
-        Process proc = memory.GetProcess();
-        bool isForeground = false;
-        IntPtr fgWindow = GetForegroundWindow();
-        if (fgWindow != IntPtr.Zero)
-        {
-            GetWindowThreadProcessId(fgWindow, out uint pid);
-            isForeground = pid == (uint)proc.Id;
+            renderTargetView = new RenderTargetView(d3dDevice, backBuffer);
         }
 
-        if (!isForeground) return;
-
-        Entity local = entityManager.LocalPlayer;
-        List<Entity> ents = entityManager.Entities;
-        if (local.PawnAddress == IntPtr.Zero) return;
-
-        Vector2 screenCenter = new Vector2(Width / 2f, Height / 2f);
-        bool aimToggle = toggleKeyPressed || IsToggleKeyPressedFallback();
-        Entity closestTarget = null;
-        float minDist = float.MaxValue;
-
-        foreach (Entity ent in ents)
+        var rasterizerDesc = new RasterizerStateDescription
         {
-            if (ent.PawnAddress == IntPtr.Zero || ent.health <= 0 || ent.team == local.team) continue;
+            FillMode = FillMode.Solid,
+            CullMode = CullMode.None
+        };
+        rasterizerState = new RasterizerState(d3dDevice, rasterizerDesc);
 
-            if (Functions.BoxESPEnabled)
+        var blendDesc = new BlendStateDescription
+        {
+            AlphaToCoverageEnable = false,
+            IndependentBlendEnable = false
+        };
+        blendDesc.RenderTarget[0] = new RenderTargetBlendDescription
+        {
+            IsBlendEnabled = true,
+            SourceBlend = BlendOption.SourceAlpha,
+            DestinationBlend = BlendOption.InverseSourceAlpha,
+            BlendOperation = BlendOperation.Add,
+            SourceAlphaBlend = BlendOption.One,
+            DestinationAlphaBlend = BlendOption.InverseSourceAlpha,
+            AlphaBlendOperation = BlendOperation.Add,
+            RenderTargetWriteMask = ColorWriteMaskFlags.All
+        };
+        blendState = new BlendState(d3dDevice, blendDesc);
+
+        string hlslCode = @"
+            struct VS_INPUT {
+                float4 Position : POSITION;
+                float4 Color : COLOR;
+            };
+            struct PS_INPUT {
+                float4 Position : SV_POSITION;
+                float4 Color : COLOR;
+            };
+            PS_INPUT VS(VS_INPUT input) {
+                PS_INPUT output;
+                output.Position = input.Position;
+                output.Color = input.Color;
+                return output;
+            }
+            float4 PS(PS_INPUT input) : SV_TARGET {
+                return input.Color;
+            }";
+
+        using (var vsBytecode = ShaderBytecode.Compile(hlslCode, "VS", "vs_4_0"))
+        {
+            vertexShader = new VertexShader(d3dDevice, vsBytecode);
+            var inputElements = new[]
             {
-                float height = Math.Abs(ent.position2D.Y - ent.head2D.Y);
-                height = Math.Max(height, 30f);
-                float width = height * 1.2f;
-                float halfWidth = width * 0.5f;
-                float x = ent.head2D.X - halfWidth / 2f;
-                float y = ent.head2D.Y - (width - height);
-                if (x < 0 || y < 0 || x + halfWidth > Width || y + width > Height || float.IsNaN(x) || float.IsNaN(y)) continue;
-                g.DrawRectangle(espPen, x, y, halfWidth, width);
+                new InputElement("POSITION", 0, Format.R32G32B32_Float, 0, 0),
+                new InputElement("COLOR", 0, Format.R8G8B8A8_UNorm, 12, 0)
+            };
+            inputLayout = new InputLayout(d3dDevice, vsBytecode.Bytecode, inputElements);
+        }
+        using (var psBytecode = ShaderBytecode.Compile(hlslCode, "PS", "ps_4_0"))
+        {
+            pixelShader = new PixelShader(d3dDevice, psBytecode);
+        }
+
+        Thread renderThread = new Thread(RenderLoop)
+        {
+            IsBackground = true,
+            Priority = ThreadPriority.Normal
+        };
+        renderThread.Start();
+        Console.Write(" (✓)\n");
+
+        Console.WriteLine("[i]: Initialization Complete. You may now play the game!");
+        Thread.Sleep(3000);
+
+        Thread menuThread = new Thread(() =>
+        {
+            while (true)
+            {
+                Console.Clear();
+                Console.WriteLine("\r\n     __                 _              __                     \r\n    / _\\_ __ ___   ___ | | _____ _   _/ _\\ ___ _ __   ___ ___ \r\n    \\ \\| '_ ` _ \\ / _ \\| |/ / _ \\ | | \\ \\ / _ \\ '_ \\ / __/ _ \\\r\n    _\\ \\ | | | | | (_) |   <  __/ |_| |\\ \\  __/ | | | (_|  __/\r\n    \\__/_| |_| |_|\\___/|_|\\_\\___|\\__, \\__/\\___|_| |_|\\___\\___| v1.1 BETA\r\n                                 |___/                        ");
+                if (Functions.BoxESPEnabled) { Console.WriteLine($"\n[1]: BoxESP (ON)"); } else { Console.WriteLine($"\n[1]: BoxESP (OFF)"); }
+                if (Functions.BoneESPEnabled) { Console.WriteLine($"[2]: BoneESP (ON)"); } else { Console.WriteLine($"[2]: BoneESP (OFF)"); }
+                //if (Functions.AimAssistEnabled) { Console.WriteLine($"[3]: AimAssist (ON)"); } else { Console.WriteLine($"[3]: AimAssist (OFF)"); }
+                //if (Functions.RecoilControlEnabled) { Console.WriteLine($"[4]: RCS (ON)"); } else { Console.WriteLine($"[4]: RCS (OFF)"); }
+                Console.Write($"-> ");
+                string input = Console.ReadLine();
+                if (input == "1")
+                {
+                    if (Functions.BoxESPEnabled) { Functions.BoxESPEnabled = false; } else { Functions.BoxESPEnabled = true; }
+                }
+                if (input == "2")
+                {
+                    if (Functions.BoneESPEnabled) { Functions.BoneESPEnabled = false; } else { Functions.BoneESPEnabled = true; }
+                }
+                //if (input == "3")
+                //{
+                //    if (Functions.AimAssistEnabled) { Functions.AimAssistEnabled = false; } else { Functions.AimAssistEnabled = true; }
+                //}
+                //if (input == "4")
+                //{
+                //    if (Functions.RecoilControlEnabled) { Functions.RecoilControlEnabled = false; } else { Functions.RecoilControlEnabled = true; }
+                //}
+            }
+        });
+        menuThread.IsBackground = true;
+        menuThread.Priority = ThreadPriority.Normal;
+        menuThread.Start();
+    }
+
+    private void RenderLoop()
+    {
+        while (running)
+        {
+            Stopwatch sw = Stopwatch.StartNew();
+            RenderFrame();
+            long elapsedMs = sw.ElapsedTicks * 1000 / Stopwatch.Frequency;
+            // ~7 ms per frame = 144 FPS cap
+            int targetMs = 7;
+            if (elapsedMs < targetMs)
+                Thread.Sleep((int)(targetMs - elapsedMs));
+        }
+    }
+
+    private void RenderFrame()
+    {
+        if (d3dDevice == null || swapChain == null) return;
+
+        try
+        {
+            GetClientRect(hWnd, out RECT clientRect);
+            float width = clientRect.Right - clientRect.Left;
+            float height = clientRect.Bottom - clientRect.Top;
+
+            deviceContext.Rasterizer.SetViewport(new SharpDX.Viewport(0, 0, (int)width, (int)height, 0f, 1f));
+            deviceContext.Rasterizer.State = rasterizerState;
+            deviceContext.OutputMerger.SetBlendState(blendState, new RawColor4(0, 0, 0, 0));
+
+            deviceContext.OutputMerger.SetRenderTargets(renderTargetView);
+            deviceContext.ClearRenderTargetView(renderTargetView, new RawColor4(0f, 0f, 0f, 0f));
+
+            deviceContext.InputAssembler.InputLayout = inputLayout;
+            deviceContext.VertexShader.Set(vertexShader);
+            deviceContext.PixelShader.Set(pixelShader);
+            deviceContext.InputAssembler.PrimitiveTopology = SharpDX.Direct3D.PrimitiveTopology.LineList;
+
+            Process proc = memory.GetProcess();
+            bool isForeground = false;
+            IntPtr fgWindow = GetForegroundWindow();
+            if (fgWindow != IntPtr.Zero)
+            {
+                GetWindowThreadProcessId(fgWindow, out uint pid);
+                isForeground = pid == (uint)proc.Id;
             }
 
-            if (Functions.BoneESPEnabled && ent.bones2D != null && ent.bones2D.Count >= 18) // Not Perfect
+            if (!isForeground)
             {
-                (int, int)[] boneConnections = new (int, int)[17]
+                swapChain.Present(0, PresentFlags.None);
+                return;
+            }
+
+            Entity local = entityManager.LocalPlayer;
+            List<Entity> ents = entityManager.Entities;
+            if (local.PawnAddress == IntPtr.Zero)
+            {
+                swapChain.Present(0, PresentFlags.None);
+                return;
+            }
+
+            NumericsVector2 screenCenter = new NumericsVector2(width / 2f, height / 2f);
+            Entity closestTarget = null;
+            float minDist = float.MaxValue;
+
+            int[] rgba = Functions.SelectedColorRGBA;
+            RawColorBGRA matchColor = new RawColorBGRA((byte)rgba[0], (byte)rgba[1], (byte)rgba[2], (byte)rgba[3]);
+
+            List<Vertex> vertices = new List<Vertex>();
+
+            foreach (Entity ent in ents)
+            {
+                if (ent.PawnAddress == IntPtr.Zero || ent.health <= 0 || ent.team == local.team) continue;
+
+                if (Functions.BoxESPEnabled && ent.bones2D != null && ent.bones2D.Count > 0) // Perfect, dont touch!
                 {
-                    (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (4, 6), (6, 7), (7, 8), (8, 9),
-                    (4, 10), (10, 11), (11, 12), (12, 13), (0, 14), (14, 15), (0, 16), (16, 17)
-                };
-                for (int i = 0; i < boneConnections.Length; i++)
-                {
-                    var (b1, b2) = boneConnections[i];
-                    if (b1 < ent.bones2D.Count && b2 < ent.bones2D.Count)
+                    // Calculate raw min/max
+                    float headY = ent.head2D.Y;
+                    float minX = float.MaxValue;
+                    float maxX = float.MinValue;
+                    float minY = float.MaxValue;
+                    float maxY = float.MinValue;
+
+                    foreach (var bone in ent.bones2D)
                     {
-                        Vector2 p1 = ent.bones2D[b1];
-                        Vector2 p2 = ent.bones2D[b2];
-                        if (p1.X != -99f && p1.Y != -99f && p2.X != -99f && p2.Y != -99f &&
-                            !float.IsNaN(p1.X) && !float.IsNaN(p1.Y) && !float.IsNaN(p2.X) && !float.IsNaN(p2.Y))
+                        if (float.IsNaN(bone.X) || float.IsNaN(bone.Y) || bone.X == -99f || bone.Y == -99f)
+                            continue;
+
+                        if (bone.X < minX) minX = bone.X;
+                        if (bone.X > maxX) maxX = bone.X;
+                        if (bone.Y < minY) minY = bone.Y;
+                        if (bone.Y > maxY) maxY = bone.Y;
+                    }
+
+                    if (minX == float.MaxValue || maxX == float.MinValue ||
+                        minY == float.MaxValue || maxY == float.MinValue)
+                        continue;
+
+                    // Raw box from head to feet
+                    float rawHeight = maxY - headY;
+                    if (rawHeight < 10f) continue;
+
+                    // Add a little padding
+                    float paddingTop = rawHeight * 0.12f;   // 12% above head pos
+                    float paddingBottom = rawHeight * 0.09f; // 9% below feet pos
+
+                    float boxY = headY - paddingTop;
+                    float boxHeight = rawHeight + paddingTop + paddingBottom;
+
+                    float boxWidth = (maxX - minX) * 1.16f; // widen box slightly (16%)
+                    float boxX = (minX + maxX) / 2f - (boxWidth / 2f);
+
+                    // Clip check
+                    if (boxX < 0 || boxY < 0 || boxX + boxWidth > width || boxY + boxHeight > height)
+                        continue;
+
+                    // Convert to NDC
+                    float nx1 = (boxX / width) * 2f - 1f;
+                    float ny1 = 1f - (boxY / height) * 2f;
+                    float nx2 = ((boxX + boxWidth) / width) * 2f - 1f;
+                    float ny2 = 1f - ((boxY + boxHeight) / height) * 2f;
+
+                    vertices.AddRange(new[]
+                    {
+                        new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor },
+                        new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
+                        new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
+                        new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
+                        new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
+                        new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
+                        new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
+                        new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor }
+                    });
+                }
+
+                if (Functions.BoneESPEnabled && ent.bones2D != null && ent.bones2D.Count > 0) // Not Perfect yet, still has a weird zig zag in the back area!
+                {
+                    (int, int)[] boneConnections = new (int, int)[17]
+                    {
+                        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (4, 6), (6, 7), (7, 8), (8, 9),
+                        (4, 10), (10, 11), (11, 12), (12, 13), (0, 14), (14, 15), (0, 16), (16, 17)
+                    };
+                    for (int i = 0; i < boneConnections.Length; i++)
+                    {
+                        var (b1, b2) = boneConnections[i];
+                        if (b1 >= ent.bones2D.Count || b2 >= ent.bones2D.Count)
                         {
-                            g.DrawLine(espPen, p1.X, p1.Y, p2.X, p2.Y);
+                            continue;
                         }
+                        NumericsVector2 p1 = ent.bones2D[b1];
+                        NumericsVector2 p2 = ent.bones2D[b2];
+                        if (p1.X == -99f || p1.Y == -99f || p2.X == -99f || p2.Y == -99f ||
+                            float.IsNaN(p1.X) || float.IsNaN(p1.Y) || float.IsNaN(p2.X) || float.IsNaN(p2.Y))
+                        {
+                            continue;
+                        }
+                        float nx1 = (p1.X / width) * 2f - 1f;
+                        float ny1 = 1f - (p1.Y / height) * 2f;
+                        float nx2 = (p2.X / width) * 2f - 1f;
+                        float ny2 = 1f - (p2.Y / height) * 2f;
+
+                        vertices.AddRange(new[]
+                        {
+                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor }
+                        });
+                    }
+                }
+
+                if (Functions.AimAssistEnabled && ent.head2D.X != -99f && ent.head2D.Y != -99f &&
+                    !float.IsNaN(ent.head2D.X) && !float.IsNaN(ent.head2D.Y))
+                {
+                    float distToCenter = NumericsVector2.Distance(screenCenter, ent.head2D);
+                    float fovRadius = Functions.AimAssistFOVSize * 20f;
+                    if (distToCenter <= fovRadius && distToCenter < minDist)
+                    {
+                        minDist = distToCenter;
+                        closestTarget = ent;
                     }
                 }
             }
 
-            if (!Functions.AimAssistEnabled || !aimToggle || ent.head2D.X == -99f || ent.head2D.Y == -99f ||
-                float.IsNaN(ent.head2D.X) || float.IsNaN(ent.head2D.Y)) continue;
-
-            float distToCenter = Vector2.Distance(screenCenter, ent.head2D);
-            float fovRadius = Functions.AimAssistFOVSize * 20f;
-            if (distToCenter <= fovRadius && distToCenter < minDist)
+            if (Functions.AimAssistEnabled) // Works Perfectly, dont touch! (Long term only show if toggle key is also pressed)
             {
-                minDist = distToCenter;
-                closestTarget = ent;
+                float fovRadius = Functions.AimAssistFOVSize * 20f;
+                RawColorBGRA fovColor = matchColor; // Match selected color
+
+                const int segments = 32;
+                for (int i = 0; i < segments; i++)
+                {
+                    float angle1 = (float)(i * Math.PI * 2 / segments);
+                    float angle2 = (float)((i + 1) * Math.PI * 2 / segments);
+                    float x1 = screenCenter.X + fovRadius * (float)Math.Cos(angle1);
+                    float y1 = screenCenter.Y + fovRadius * (float)Math.Sin(angle1);
+                    float x2 = screenCenter.X + fovRadius * (float)Math.Cos(angle2);
+                    float y2 = screenCenter.Y + fovRadius * (float)Math.Sin(angle2);
+
+                    if (float.IsNaN(x1) || float.IsNaN(y1) || float.IsNaN(x2) || float.IsNaN(y2))
+                    {
+                        continue;
+                    }
+
+                    float nx1 = (x1 / width) * 2f - 1f;
+                    float ny1 = 1f - (y1 / height) * 2f;
+                    float nx2 = (x2 / width) * 2f - 1f;
+                    float ny2 = 1f - (y2 / height) * 2f;
+
+                    vertices.AddRange(new[]
+                    {
+                        new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = fovColor },
+                        new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = fovColor }
+                    });
+                }
             }
+
+            if (vertices.Count > 0)
+            {
+                using (var vb = Buffer.Create(d3dDevice, BindFlags.VertexBuffer, vertices.ToArray()))
+                {
+                    deviceContext.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(vb, Utilities.SizeOf<Vertex>(), 0));
+                    deviceContext.Draw(vertices.Count, 0);
+                }
+            }
+
+            if (Functions.AimAssistEnabled) // Need to add support for toggle keys, last keyboard hook caused issues.
+            {
+                
+            }
+
+            if (Functions.RecoilControlEnabled) // The required offsets have been added for RCS!
+            {
+                
+            }
+
+            swapChain.Present(0, PresentFlags.None);
         }
-
-        if (Functions.AimAssistEnabled && aimToggle)
+        catch (Exception ex)
         {
-            float fovRadius = Functions.AimAssistFOVSize * 20f;
-            Pen fovPen = new Pen(Color.FromArgb(75, 0, 0, 0), 1f);
-            g.DrawEllipse(fovPen, screenCenter.X - fovRadius, screenCenter.Y - fovRadius, fovRadius * 2f, fovRadius * 2f);
-        }
-
-        if (Functions.AimAssistEnabled && aimToggle && closestTarget != null) // Way too humanized lmfao
-        {
-            Vector2 targetHead = closestTarget.head2D;
-            targetHead.Y -= 4f + (float)rand.NextDouble() * 2f;  // Humanize aim point
-            Vector2 delta = targetHead - screenCenter;
-            float deltaLen = delta.Length();
-            float angle = (float)Math.Atan2(delta.Y, delta.X);
-
-            double lockTimeMs = (DateTime.Now - targetLockStart).TotalMilliseconds;
-            float lockFactor = (lockTimeMs < 150.0) ? Memory.Clamp((float)(1.5 - lockTimeMs / 100.0), 0.3f, 1f) : 1f;
-            delta *= lockFactor;
-
-            Vector2 aimDelta = new Vector2((float)(Math.Cos(angle) * deltaLen), (float)(Math.Sin(angle) * deltaLen));
-            float smooth = Functions.AimAssistSmoothing / 100f;
-            smooth = Memory.Clamp(smooth, 0.05f, 0.95f);
-            float accel = 1f - (float)Math.Pow(smooth, 2.3);
-
-            currentVelocity = currentVelocity * 0.85f + aimDelta * accel * 0.15f;
-            Vector2 move = currentVelocity;
-            float maxSpeed = 13f;
-            move.X = Memory.Clamp(move.X, -maxSpeed, maxSpeed);
-            move.Y = Memory.Clamp(move.Y, -maxSpeed, maxSpeed);
-
-            mouse_event(MOUSEEVENTF_MOVE, (uint)move.X, (uint)move.Y, 0u, 0);
-            Thread.Sleep(rand.Next(1, 4));  // Small delay for human feel
+            Console.WriteLine("[ERROR]: " + ex.Message);
+            Thread.Sleep(5000);
+            Environment.Exit(1);
         }
     }
 
-    protected override void Dispose(bool disposing)  // Cleanup
+    public void Run()
     {
-        if (disposing)
+        while (running)
         {
-            if (keyboardHookId != IntPtr.Zero) UnhookWindowsHookEx(keyboardHookId);
-            renderTimer.Stop();
-            renderTimer.Dispose();
-            espPen?.Dispose();
-            Functions.BoxESPEnabledChanged -= OnFeatureEnabledChanges;
-            Functions.BoneESPEnabledChanged -= OnFeatureEnabledChanges;
-            Functions.AimAssistEnabledChanged -= OnFeatureEnabledChanges;
-            components?.Dispose();
+            System.Windows.Forms.Application.DoEvents();
+            Thread.Sleep(10);
         }
-        base.Dispose(disposing);
     }
 
-    private void InitializeComponent()  // Designer generated
+    public void Dispose()
     {
-        this.SuspendLayout();
-        this.AutoScaleDimensions = new SizeF(7F, 15F);
-        this.AutoScaleMode = AutoScaleMode.Font;
-        this.ClientSize = new Size(1920, 1080);
-        this.FormBorderStyle = FormBorderStyle.None;
-        this.Name = "Overlay";
-        this.Text = "Microsoft.COM.Surogate";
-        this.TopMost = true;
-        this.Load += new EventHandler(this.Overlay_Load);
-        this.ResumeLayout(false);
+        running = false;
+        if (vertexBuffer != null)
+        {
+            vertexBuffer.Dispose();
+            vertexBuffer = null;
+        }
+        if (inputLayout != null)
+        {
+            inputLayout.Dispose();
+            inputLayout = null;
+        }
+        if (vertexShader != null)
+        {
+            vertexShader.Dispose();
+            vertexShader = null;
+        }
+        if (pixelShader != null)
+        {
+            pixelShader.Dispose();
+            pixelShader = null;
+        }
+        if (renderTargetView != null)
+        {
+            renderTargetView.Dispose();
+            renderTargetView = null;
+        }
+        if (swapChain != null)
+        {
+            swapChain.Dispose();
+            swapChain = null;
+        }
+        if (d3dDevice != null)
+        {
+            d3dDevice.Dispose();
+            d3dDevice = null;
+        }
+        if (rasterizerState != null)
+        {
+            rasterizerState.Dispose();
+            rasterizerState = null;
+        }
+        if (blendState != null)
+        {
+            blendState.Dispose();
+            blendState = null;
+        }
+        if (hWnd != IntPtr.Zero)
+        {
+            DestroyWindow(hWnd);
+            hWnd = IntPtr.Zero;
+        }
     }
 }
