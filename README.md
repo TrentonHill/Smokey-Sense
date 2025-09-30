@@ -104,18 +104,3 @@ git clone https://github.com/TrentonHill/Smokey-Sense
 * The overlay uses **SharpDX + Direct3D11** to avoid the FPS & tearing issues observed with GDI. This is a major performance improvement in full matches.
 * **Costura.Fody** is used in the project file so referenced assemblies are embedded into the final exe; the result is a single distributable binary.
 * Offsets are obtained from public A2X sources on startup — if offsets fail to fetch, the console will print an error and continue using cached values (if present).
-
----
-
-## Disclaimer & Safety
-
-This project is for education and research. Cheating in multiplayer games can result in permanent bans. I do not recommend using it in live competitive matches. Use offline or with bots if you want to test. I am not responsible for bans or other consequences.
-
----
-
-If you want, I can also:
-
-* produce a shortened release notes template for the Releases page, or
-* generate a `CHANGELOG.md` stub that you can append to with version-specific entries.
-
-Which one do you want next?
