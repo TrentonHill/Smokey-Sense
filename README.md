@@ -17,7 +17,7 @@ This is version **1.1 BETA**, so expect some updates soon. I wrote everything my
 * **Aim Assist (Implemented — Disabled):** Humanized, smoothed aim behavior with an FOV circle. **Disabled by default** until we confirm it's safe with VAC-NET.
 * **Recoil Control System (RCS) (Implemented — Disabled):** RCS added, but **disabled by default** until verified safe.
 * **Embedded Dependencies:** All NuGet assemblies are embedded into the `.exe` via **Costura.Fody** — no extra DLLs required.
-* **Interactive Console Menu:** Toggle features at runtime using the console menu — type the corresponding number to enable/disable a function. No rebuild required for most common toggles.
+* **Interactive Console Menu:** Toggle features at runtime using the console menu, type the corresponding number to enable/disable a function. No rebuild required!
 * **Cross-Platform Vibes:** Tested on Windows 10 & 11; can run on Steam Deck (build on Windows, transfer exe).
 
 ---
@@ -91,16 +91,7 @@ git clone https://github.com/TrentonHill/Smokey-Sense
 
 ## Usage & Controls
 
-* **Interactive Console Menu:** When the program is running it exposes a console-based menu. Type the number for the feature you want to toggle and press Enter. The menu controls enabling/disabling for ESP, Bones, Aim Assist (if enabled), RCS (if enabled), and other features. No need to re-edit `Functions.cs` for day-to-day toggles.
+* **Interactive Console Menu:** When the program is running it exposes a console based menu. Type the number for the feature you want to toggle and press Enter. The menu controls enabling/disabling for ESP, Bones, Aim Assist (if enabled), RCS (if enabled), and other features. No need to re-edit `Functions.cs` for day to day toggles.
 * **Default Keys:** There are a few default keybinds for quick toggles (see `Functions.cs`) — but the console menu is the recommended way to toggle at runtime.
 * **Aim Assist & RCS:** Both features exist in the codebase but are **disabled by default**. They will remain disabled until explicit verification that they are safe from detection signals introduced by VAC-NET.
-* **Advanced Customization:** If you want to change defaults, `Functions.cs` contains the config and default keybinds — advanced users can edit and rebuild. For most users, use the runtime console menu.
-* **Exit:** Close the console window to exit.
-
----
-
-## Development Notes
-
-* The overlay uses **SharpDX + Direct3D11** to avoid the FPS & tearing issues observed with GDI. This is a major performance improvement in full matches.
-* **Costura.Fody** is used in the project file so referenced assemblies are embedded into the final exe; the result is a single distributable binary.
-* Offsets are obtained from public A2X sources on startup — if offsets fail to fetch, the console will print an error and continue using cached values (if present).
+* **Advanced Customization:** If you want to change defaults, `Functions.cs` contains the config and default keybinds, advanced users can edit and rebuild. For most users, use the runtime console menu.
