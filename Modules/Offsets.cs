@@ -25,6 +25,7 @@ namespace Microsoft.COM.Surogate.Data
             m_modelState = CSkeletonInstance.m_modelState;
             m_pGameSceneNode = C_BaseEntity.m_pGameSceneNode;
 
+
             shotsFired = C_CSPlayerPawn.m_iShotsFired;
             punchAngle = C_CSPlayerPawn.m_aimPunchAngle;
             punchAngleVel = C_CSPlayerPawn.m_aimPunchAngleVel;
@@ -32,6 +33,10 @@ namespace Microsoft.COM.Surogate.Data
             punchTickFraction = C_CSPlayerPawn.m_aimPunchTickFraction;
             punchCacheAddr = C_CSPlayerPawn.m_aimPunchCache;
             punchCacheCount = punchCacheAddr + 0x8;
+
+            dwLocalPlayerController = ClientDll.dwLocalPlayerController;
+            m_entitySpottedState = C_CSPlayerPawn.m_entitySpottedState;
+            m_bSpottedByMask = EntitySpottedState_t.m_bSpottedByMask;
 
             await Task.CompletedTask;
         }
@@ -47,6 +52,12 @@ namespace Microsoft.COM.Surogate.Data
         public static int dwEntityList = 0x00;  // Entity list pointer
         public static int m_modelState = 0x00;  // Model state
         public static int m_pGameSceneNode = 0x00;  // Game scene node pointer
+
+        public static int dwLocalPlayerController = 0x00; // Local player controller address
+        public static int m_entitySpottedState = 0x00; // Entity spotted state (for visibility checks)
+        public static int m_bSpottedByMask = 0x00; // Spotted by mask (for visibility checks)
+
+
 
         // Recoil Control offsets
         public static int shotsFired = 0x00;

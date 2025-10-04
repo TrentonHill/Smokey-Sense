@@ -125,11 +125,16 @@ public class EntityManager
                 return entityList;
             }
 
+            IntPtr localControllerPtr = memory.ReadPointer(memory.GetModuleBase() + Offsets.dwLocalPlayerController);
+            int localControllerIndex = -1;
+
             Entity local = GetLocalPlayer();
             for (int j = 0; j < 64; j++)  // Loop through possible players (up to 64)
             {
                 IntPtr controller = memory.ReadPointer(listEntry, j * 120);
                 if (controller == IntPtr.Zero) continue;
+
+                if (controller == localControllerPtr) localControllerIndex = j;
 
                 int pawnHandle = memory.ReadInt(controller, Offsets.m_hPlayerPawn);
                 if (pawnHandle == 0) continue;
@@ -148,7 +153,41 @@ public class EntityManager
                 if (pawn == IntPtr.Zero || pawn == local.PawnAddress || memory.ReadInt(pawn, Offsets.m_iHealth) <= 0) continue;
 
                 Entity ent = PopulateEntity(pawn, local);
-                if (ent != null) entityList.Add(ent);
+                if (ent != null)
+                {
+                    ent.Index = j;
+                    entityList.Add(ent);
+                }
+            }
+
+            //Vis Check
+            // RAW bit assumption = controller index; empirical observation shows bit0 active when localControllerIndex=1 -> adjust (-1) if >0
+            int localBitRaw = localControllerIndex;
+            int localBit = -1;
+            if (localControllerIndex >= 0)
+            {
+                localBit = localControllerIndex > 0 ? (localControllerIndex - 1) : 0; // off-by-one compensation
+                localBit &= 0x3F;
+            }
+
+            if (localBit >= 0)
+            {
+
+                foreach (var ent in entityList)
+                {
+                    int spottedStateOffset = Offsets.m_entitySpottedState;
+                    int maskOffset = spottedStateOffset + Offsets.m_bSpottedByMask;
+                    uint mask0 = (uint)memory.ReadInt(ent.PawnAddress, maskOffset);
+                    uint mask1 = (uint)memory.ReadInt(ent.PawnAddress, maskOffset + 4);
+                    bool spotted = localBit < 32 ? (mask0 & (1u << localBit)) != 0 : (mask1 & (1u << (localBit - 32))) != 0;
+                    ent.Visible = spotted;
+
+                }
+                local.Visible = true;
+            }
+            else
+            {
+                foreach (var ent in entityList) ent.Visible = false;
             }
 
             entities = entityList;

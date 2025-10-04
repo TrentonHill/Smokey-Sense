@@ -23,4 +23,5 @@ public class Entity
     public List<Vector2> bones2D { get; set; }  // 2D bone positions for drawing
     public IntPtr HeldWeapon { get; set; }  // Held weapon pointer
     public short WeaponIndex { get; set; }  // Weapon index
+    public int Index { get; set; } = -1;// Player index (for identification)
 }

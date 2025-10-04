@@ -384,12 +384,16 @@ public class Overlay : IDisposable
 
             int[] rgba = Functions.SelectedColorRGBA;
             RawColorBGRA matchColor = new RawColorBGRA((byte)rgba[0], (byte)rgba[1], (byte)rgba[2], (byte)rgba[3]);
+            RawColorBGRA colorWhenVisible = new RawColorBGRA(0, 255, 80, (byte)rgba[3]); // Green
 
             List<Vertex> vertices = new List<Vertex>();
 
             foreach (Entity ent in ents)
             {
                 if (ent.PawnAddress == IntPtr.Zero || ent.health <= 0 || ent.team == local.team) continue;
+
+                RawColorBGRA entityColor = ent.Visible ? colorWhenVisible : matchColor;
+
 
                 if (Functions.BoxESPEnabled && ent.bones2D != null && ent.bones2D.Count > 0) // Perfect, dont touch!
                 {
@@ -441,14 +445,14 @@ public class Overlay : IDisposable
 
                     vertices.AddRange(new[]
                     {
-                        new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor }
+                        new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = entityColor },
+                        new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = entityColor },
+                        new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = entityColor },
+                        new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = entityColor },
+                        new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = entityColor },
+                        new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = entityColor },
+                        new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = entityColor },
+                        new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = entityColor }
                     });
                 }
 
@@ -480,8 +484,8 @@ public class Overlay : IDisposable
 
                         vertices.AddRange(new[]
                         {
-                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor }
+                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = entityColor },
+                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = entityColor }
                         });
                     }
                 }
