@@ -18,6 +18,8 @@ using Device = SharpDX.Direct3D11.Device;
 using NumericsVector2 = System.Numerics.Vector2;
 using NumericsVector3 = System.Numerics.Vector3;
 using SharpDXVector3 = SharpDX.Vector3;
+using Vector2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
 
 public class Overlay : IDisposable
 {
@@ -41,6 +43,7 @@ public class Overlay : IDisposable
     private readonly WndProc wndProcDelegate;
     private RasterizerState rasterizerState;
     private BlendState blendState;
+    private static Vector3 OldPunch = Vector3.Zero;
 
     private const int WS_EX_LAYERED = 0x80000;
     private const int WS_EX_TRANSPARENT = 0x20;
@@ -52,10 +55,17 @@ public class Overlay : IDisposable
     private const int WM_KEYUP = 257;
     private const int VK_RSHIFT = 161;
     private const int VK_LSHIFT = 160;
-    private const uint MOUSEEVENTF_MOVE = 1u;
     private const uint LWA_ALPHA = 0x2;
     private const uint WM_DESTROY = 0x0002;
     private const uint WM_CLOSE = 0x0010;
+    private const int INPUT_KEYBOARD = 1;
+    private const int INPUT_MOUSE = 0;
+    private const uint MOUSEEVENTF_MOVE = 0x0001;
+    private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    private const uint KEYEVENTF_KEYDOWN = 0x0000;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const byte VK_SPACE = 0x20;
 
     [DllImport("user32.dll")]
     private static extern IntPtr CreateWindowEx(int dwExStyle, string lpClassName, string lpWindowName, int dwStyle, int x, int y, int nWidth, int nHeight, IntPtr hWndParent, IntPtr hMenu, IntPtr hInstance, IntPtr lpParam);
@@ -69,8 +79,6 @@ public class Overlay : IDisposable
     private static extern short GetAsyncKeyState(int vKey);
     [DllImport("user32.dll")]
     private static extern short GetKeyState(int vKey);
-    [DllImport("user32.dll")]
-    private static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool UnhookWindowsHookEx(IntPtr hhk);
@@ -92,6 +100,8 @@ public class Overlay : IDisposable
     private static extern bool PostQuitMessage(int nExitCode);
     [DllImport("dwmapi.dll")]
     private static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS pMarInset);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, [In] INPUT[] pInputs, int cbSize);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct WNDCLASS
@@ -131,6 +141,46 @@ public class Overlay : IDisposable
     {
         public SharpDXVector3 Position;
         public RawColorBGRA Color;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint type;
+        public InputUnion U;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public int mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
     }
 
     private delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
@@ -175,12 +225,6 @@ public class Overlay : IDisposable
             screen.Bounds.Left, screen.Bounds.Top, screen.Bounds.Width, screen.Bounds.Height,
             IntPtr.Zero, IntPtr.Zero, wndClass.hInstance, IntPtr.Zero
         );
-        if (hWnd == IntPtr.Zero)
-        {
-            Console.WriteLine($"[ERROR]: Initializing Overlay Failed, Error: {Marshal.GetLastWin32Error()}");
-            Thread.Sleep(5000);
-            Environment.Exit(1);
-        }
         MARGINS margins = new MARGINS { cxLeftWidth = -1, cxRightWidth = -1, cyTopHeight = -1, cyBottomHeight = -1 };
         DwmExtendFrameIntoClientArea(hWnd, ref margins);
         SetLayeredWindowAttributes(hWnd, 0, 255, LWA_ALPHA);
@@ -289,11 +333,11 @@ public class Overlay : IDisposable
             while (true)
             {
                 Console.Clear();
-                Console.WriteLine("\r\n     __                 _              __                     \r\n    / _\\_ __ ___   ___ | | _____ _   _/ _\\ ___ _ __   ___ ___ \r\n    \\ \\| '_ ` _ \\ / _ \\| |/ / _ \\ | | \\ \\ / _ \\ '_ \\ / __/ _ \\\r\n    _\\ \\ | | | | | (_) |   <  __/ |_| |\\ \\  __/ | | | (_|  __/\r\n    \\__/_| |_| |_|\\___/|_|\\_\\___|\\__, \\__/\\___|_| |_|\\___\\___| v1.1 BETA\r\n                                 |___/                        ");
+                Console.WriteLine("\r\n     __                 _              __                     \r\n    / _\\_ __ ___   ___ | | _____ _   _/ _\\ ___ _ __   ___ ___ \r\n    \\ \\| '_ ` _ \\ / _ \\| |/ / _ \\ | | \\ \\ / _ \\ '_ \\ / __/ _ \\\r\n    _\\ \\ | | | | | (_) |   <  __/ |_| |\\ \\  __/ | | | (_|  __/\r\n    \\__/_| |_| |_|\\___/|_|\\_\\___|\\__, \\__/\\___|_| |_|\\___\\___| v1.2 BETA\r\n                                 |___/                        ");
                 if (Functions.BoxESPEnabled) { Console.WriteLine($"\n[1]: BoxESP (ON)"); } else { Console.WriteLine($"\n[1]: BoxESP (OFF)"); }
                 if (Functions.BoneESPEnabled) { Console.WriteLine($"[2]: BoneESP (ON)"); } else { Console.WriteLine($"[2]: BoneESP (OFF)"); }
-                //if (Functions.AimAssistEnabled) { Console.WriteLine($"[3]: AimAssist (ON)"); } else { Console.WriteLine($"[3]: AimAssist (OFF)"); }
-                //if (Functions.RecoilControlEnabled) { Console.WriteLine($"[4]: RCS (ON)"); } else { Console.WriteLine($"[4]: RCS (OFF)"); }
+                if (Functions.AimAssistEnabled) { Console.WriteLine($"[3]: AimAssist (ON)"); } else { Console.WriteLine($"[3]: AimAssist (OFF)"); }
+                if (Functions.RecoilControlEnabled) { Console.WriteLine($"[4]: RCS (ON)"); } else { Console.WriteLine($"[4]: RCS (OFF)"); }
                 Console.Write($"-> ");
                 string input = Console.ReadLine();
                 if (input == "1")
@@ -304,14 +348,14 @@ public class Overlay : IDisposable
                 {
                     if (Functions.BoneESPEnabled) { Functions.BoneESPEnabled = false; } else { Functions.BoneESPEnabled = true; }
                 }
-                //if (input == "3")
-                //{
-                //    if (Functions.AimAssistEnabled) { Functions.AimAssistEnabled = false; } else { Functions.AimAssistEnabled = true; }
-                //}
-                //if (input == "4")
-                //{
-                //    if (Functions.RecoilControlEnabled) { Functions.RecoilControlEnabled = false; } else { Functions.RecoilControlEnabled = true; }
-                //}
+                if (input == "3")
+                {
+                    if (Functions.AimAssistEnabled) { Functions.AimAssistEnabled = false; } else { Functions.AimAssistEnabled = true; }
+                }
+                if (input == "4")
+                {
+                    if (Functions.RecoilControlEnabled) { Functions.RecoilControlEnabled = false; } else { Functions.RecoilControlEnabled = true; }
+                }
             }
         });
         menuThread.IsBackground = true;
@@ -373,6 +417,12 @@ public class Overlay : IDisposable
             Entity local = entityManager.LocalPlayer;
             List<Entity> ents = entityManager.Entities;
             if (local.PawnAddress == IntPtr.Zero)
+            {
+                swapChain.Present(0, PresentFlags.None);
+                return;
+            }
+
+            if (local.health == 0)
             {
                 swapChain.Present(0, PresentFlags.None);
                 return;
@@ -499,7 +549,7 @@ public class Overlay : IDisposable
                 }
             }
 
-            if (Functions.AimAssistEnabled) // Works Perfectly, dont touch! (Long term only show if toggle key is also pressed)
+            if (Functions.AimAssistEnabled) // (AimAssist FOV Circle): Works Perfectly, dont touch! (Long term only show if toggle key is also pressed)
             {
                 float fovRadius = Functions.AimAssistFOVSize * 20f;
                 RawColorBGRA fovColor = matchColor; // Match selected color
@@ -546,9 +596,59 @@ public class Overlay : IDisposable
                 
             }
 
-            if (Functions.RecoilControlEnabled) // The required offsets have been added for RCS!
+            if (Functions.RecoilControlEnabled) // Do not use until we finish and confrim its undetected!
             {
-                
+                //float Strength = 100f; // percent (1 == 100%, 0.5 == 50%)
+                //float Smoothing = 5f;
+
+                //// read punch angle
+                //Vector3 rawPunch = memory.ReadVec(local.PawnAddress + Offsets.m_aimPunchAngle);
+                //Console.WriteLine($"[RCS DEBUG] Raw m_aimPunchAngle: {rawPunch}");
+                //Vector3 punch = rawPunch * Strength / 100f * 2f;
+
+                //int shotsFired = memory.ReadInt(local.PawnAddress, Offsets.shotsFired);
+                //Console.WriteLine($"[RCS DEBUG] ShotsFired: {shotsFired}");
+
+                //if (shotsFired > 1)
+                //{
+                //    Vector3 currentAngles = memory.ReadVec(memory.GetModuleBase(), Offsets.dwViewAngles);
+
+                //    // delta between previous punch and current punch
+                //    Vector3 deltaPunch = punch - OldPunch;
+
+                //    // calculate new angles
+                //    Vector3 newAngles = currentAngles - deltaPunch;
+                //    newAngles.X = Normalize(newAngles.X);
+                //    newAngles.Y = Normalize(newAngles.Y);
+
+                //    // compute float dx/dy before rounding
+                //    float dxFloat = (newAngles.X - currentAngles.X); // no / Smoothing
+                //    float dyFloat = (newAngles.Y - currentAngles.Y);
+
+                //    int dx = (int)(dxFloat * 50f); // scale up for testing
+                //    int dy = (int)(dyFloat * 50f);
+
+                //    // debug logging
+                //    Console.WriteLine($"[RCS DEBUG] CurrentAngles: {currentAngles}");
+                //    Console.WriteLine($"[RCS DEBUG] Punch: {punch}, OldPunch: {OldPunch}, DeltaPunch: {deltaPunch}");
+                //    Console.WriteLine($"[RCS DEBUG] NewAngles (after normalize): {newAngles}");
+                //    Console.WriteLine($"[RCS DEBUG] dxFloat: {dxFloat:F4}, dyFloat: {dyFloat:F4}, dx: {dx}, dy: {dy}");
+
+                //    // apply mouse move if non-zero
+                //    if (dx != 0 || dy != 0)
+                //    {
+                //        MoveMouse(dx, dy);
+                //        Console.WriteLine("[RCS DEBUG] MoveMouse called");
+                //    }
+                //    else
+                //    {
+                //        Console.WriteLine("[RCS DEBUG] dx/dy == 0 (no movement this tick)");
+                //    }
+                //}
+
+                //// store last punch for next frame
+                //OldPunch = punch;
+                //Console.WriteLine($"[RCS DEBUG] OldPunch updated: {OldPunch}");
             }
 
             swapChain.Present(0, PresentFlags.None);
@@ -559,6 +659,26 @@ public class Overlay : IDisposable
             Thread.Sleep(5000);
             Environment.Exit(1);
         }
+    }
+
+    private static void MoveMouse(int dx, int dy)
+    {
+        var inputs = new INPUT[1];
+        inputs[0].type = INPUT_MOUSE;
+        inputs[0].U.mi = new MOUSEINPUT
+        {
+            dx = dx,
+            dy = dy,
+            dwFlags = MOUSEEVENTF_MOVE
+        };
+        SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    private static float Normalize(float angle)
+    {
+        while (angle > 180) angle -= 360;
+        while (angle < -180) angle += 360;
+        return angle;
     }
 
     public void Run()

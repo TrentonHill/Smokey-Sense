@@ -59,5 +59,15 @@ namespace Microsoft.COM.Surogate.Properties {
                 resourceCulture = value;
             }
         }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.Byte[].
+        /// </summary>
+        internal static byte[] dumper {
+            get {
+                object obj = ResourceManager.GetObject("dumper", resourceCulture);
+                return ((byte[])(obj));
+            }
+        }
     }
 }

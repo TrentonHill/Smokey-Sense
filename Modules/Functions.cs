@@ -9,7 +9,7 @@ public static class Functions
     private static Color _selectedColor = Color.Black;  // Default color for ESP
     private static int[] _selectedColorRGBA = new int[4] { 0, 0, 0, 255 };  // RGBA representation
     private static bool _boxESPEnabled = true;  // Box ESP toggle
-    private static bool _boneESPEnabled = true;  // Bone ESP toggle
+    private static bool _boneESPEnabled = false;  // Bone ESP toggle
     private static bool _aimAssistEnabled = false;  // Aim assist toggle
     private static int _aimAssistFOVSize = 3;  // FOV size for aim assist
     private static int _aimAssistSmoothing = 50;  // Smoothing factor

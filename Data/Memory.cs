@@ -13,9 +13,6 @@ using System.Threading;
 public class Memory
 {
     private Process proc;  // The target process (CS2)
-    private readonly Dictionary<IntPtr, IntPtr> pointerCache = new Dictionary<IntPtr, IntPtr>();  // Cache for pointers to speed up repeated reads
-    private readonly TimeSpan cacheDuration = TimeSpan.FromMilliseconds(100.0);  // How long to keep cached values
-    private readonly Dictionary<IntPtr, DateTime> cacheTimestamps = new Dictionary<IntPtr, DateTime>();  // Timestamps for cache invalidation
 
     // DLL imports for memory reading
     [DllImport("Kernel32.dll")]
@@ -84,21 +81,6 @@ public class Memory
         return IntPtr.Zero;
     }
 
-    public IntPtr ReadPointerCached(IntPtr addy)  // Cached version for performance
-    {
-        lock (pointerCache)
-        {
-            if (pointerCache.TryGetValue(addy, out var value) && cacheTimestamps.TryGetValue(addy, out var value2) && DateTime.Now - value2 < cacheDuration)
-            {
-                return value;
-            }
-            IntPtr intPtr = ReadPointer(addy);
-            pointerCache[addy] = intPtr;
-            cacheTimestamps[addy] = DateTime.Now;
-            return intPtr;
-        }
-    }
-
     public IntPtr ReadPointer(IntPtr addy, int offset)  // Read pointer with single offset
     {
         byte[] array = new byte[8];
@@ -107,62 +89,6 @@ public class Memory
             return (IntPtr)BitConverter.ToInt64(array, 0);
         }
         return IntPtr.Zero;
-    }
-
-    public IntPtr ReadPointerCached(IntPtr addy, int offset)  // Cached with offset
-    {
-        IntPtr key = (IntPtr)((long)addy + offset);
-        lock (pointerCache)
-        {
-            if (pointerCache.TryGetValue(key, out var value) && cacheTimestamps.TryGetValue(key, out var value2) && DateTime.Now - value2 < cacheDuration)
-            {
-                return value;
-            }
-            IntPtr intPtr = ReadPointer(addy, offset);
-            pointerCache[key] = intPtr;
-            cacheTimestamps[key] = DateTime.Now;
-            return intPtr;
-        }
-    }
-
-    public IntPtr ReadPointer(IntPtr addy, int[] offsets)  // Read pointer with multiple offsets (chain)
-    {
-        IntPtr intPtr = addy;
-        foreach (int offset in offsets)
-        {
-            intPtr = ReadPointerCached(intPtr, offset);
-            if (intPtr == IntPtr.Zero)
-            {
-                return IntPtr.Zero;
-            }
-        }
-        return intPtr;
-    }
-
-    // Overloads for convenience with different number of offsets
-    public IntPtr ReadPointer(IntPtr addy, int offset1, int offset2)
-    {
-        return ReadPointer(addy, new int[2] { offset1, offset2 });
-    }
-    public IntPtr ReadPointer(IntPtr addy, int offset1, int offset2, int offset3)
-    {
-        return ReadPointer(addy, new int[3] { offset1, offset2, offset3 });
-    }
-    public IntPtr ReadPointer(IntPtr addy, int offset1, int offset2, int offset3, int offset4)
-    {
-        return ReadPointer(addy, new int[4] { offset1, offset2, offset3, offset4 });
-    }
-    public IntPtr ReadPointer(IntPtr addy, int offset1, int offset2, int offset3, int offset4, int offset5)
-    {
-        return ReadPointer(addy, new int[5] { offset1, offset2, offset3, offset4, offset5 });
-    }
-    public IntPtr ReadPointer(IntPtr addy, int offset1, int offset2, int offset3, int offset4, int offset5, int offset6)
-    {
-        return ReadPointer(addy, new int[6] { offset1, offset2, offset3, offset4, offset5, offset6 });
-    }
-    public IntPtr ReadPointer(IntPtr addy, int offset1, int offset2, int offset3, int offset4, int offset5, int offset6, int offset7)
-    {
-        return ReadPointer(addy, new int[7] { offset1, offset2, offset3, offset4, offset5, offset6, offset7 });
     }
 
     public byte[] ReadBytes(IntPtr addy, int bytes)  // Read raw bytes

@@ -18,7 +18,7 @@ internal static class Program
     private static async Task Main()
     {
         Console.Title = "Microsoft.COM.Surogate";
-        Console.WriteLine("\r\n     __                 _              __                     \r\n    / _\\_ __ ___   ___ | | _____ _   _/ _\\ ___ _ __   ___ ___ \r\n    \\ \\| '_ ` _ \\ / _ \\| |/ / _ \\ | | \\ \\ / _ \\ '_ \\ / __/ _ \\\r\n    _\\ \\ | | | | | (_) |   <  __/ |_| |\\ \\  __/ | | | (_|  __/\r\n    \\__/_| |_| |_|\\___/|_|\\_\\___|\\__, \\__/\\___|_| |_|\\___\\___| v1.1 BETA\r\n                                 |___/                        ");
+        Console.WriteLine("\r\n     __                 _              __                     \r\n    / _\\_ __ ___   ___ | | _____ _   _/ _\\ ___ _ __   ___ ___ \r\n    \\ \\| '_ ` _ \\ / _ \\| |/ / _ \\ | | \\ \\ / _ \\ '_ \\ / __/ _ \\\r\n    _\\ \\ | | | | | (_) |   <  __/ |_| |\\ \\  __/ | | | (_|  __/\r\n    \\__/_| |_| |_|\\___/|_|\\_\\___|\\__, \\__/\\___|_| |_|\\___\\___| v1.2 BETA\r\n                                 |___/                        ");
         Console.Write("[i]: Looking for CS2.exe!");
         if (Process.GetProcessesByName("cs2").Length == 0)
         {
@@ -31,12 +31,16 @@ internal static class Program
             Console.Write(" (✓)\n");
             try
             {
-                Console.Write("[i]: Updating Offsets!");
-                await Offsets.UpdateOffsets();
-                Console.Write(" (✓)\n");
-
                 Console.Write("[i]: Initializing Memory!");
                 Memory memory = new Memory();
+                Console.Write(" (✓)\n");
+
+                Console.Write("[i]: Updating Client Base!");
+                Offsets.ClientBaseAddr = memory.GetModuleBase();
+                Console.Write(" (✓)\n");
+
+                Console.Write("[i]: Updating Offsets!");
+                await Offsets.UpdateOffsets();
                 Console.Write(" (✓)\n");
 
                 Console.Write("[i]: Starting Entity Manager!");
