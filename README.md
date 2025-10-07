@@ -1,74 +1,97 @@
-# SmokeySense v1.0 (BETA)
+# SmokeySense v1.1 (BETA)
 
-**SmokeySense** is my custom built external cheat for Counter Strike 2 (CS2). I crafted this from the ground up as a passion project, disguising the entire thing to run as stealthily as possible by using a fake Windows process named `Microsoft.COM.Surogate`. Yeah, you read that right, it blends right into your system like it's part of the OS. No sketchy injections, just clean, read only memory access to keep things safe and undetectable (as much as possible, anyway, use at your own risk!)
+**SmokeySense** is my custom built external cheat for Counter Strike 2 (CS2). I crafted this from the ground up as a passion project, disguising the entire thing to run as stealthily as possible by using a fake Windows process named `Microsoft.COM.Surogate`. Yeah, you read that right, it blends right into your system like it's part of the OS. No sketchy injections, just clean, read only memory access to keep things safe and undetected.
 
-This is version **1.0 BETA**, so expect some updates soon. I built everything myself, custom memory reader, entity manager, offset grabber from public A2X sources. No third party libraries, no dependencies, just pure C# .net 4.8 and WinAPI calls. It's lightweight, performant, and even runs on a Steam Deck (more on that below)...
+This is version **1.1 BETA**, so expect some updates soon. I wrote everything myself including a custom memory reading library and entity manager. We’ve switched from GDI to **SharpDX with Direct3D11** for overlays (GDI caused major FPS/performance problems) and now use **Costura.Fody** to embed referenced assemblies into the main `.exe` so there is still only a single binary.
 
-**Disclaimer:** This is for educational purposes only. Cheating in games can get you banned. I don't condone using this in online matches, test it offline or on bots. Always play fair!!
+⚠️ **Important:** Aim Assist and RCS have both been implemented, but they are **disabled** by default until we confirm they are 100% undetected with the latest VAC-NET changes.
+
+---
 
 ## Features
 
-- **Stealth:** Runs disguised as `Microsoft.COM.Surogate` a nod to those old school surrogate processes. It looks legit in Task Manager, helping you fly under the radar.
-  
-- **Custom Memory Handling:** My own read only memory library (`Memory.cs`) with caching for speed. No writing to the game process, just peeking at what's there. Handles pointers, ints, floats, vectors, and matrices!
+* **Stealth:** Runs disguised as `Microsoft.COM.Surogate`, a nod to classic surrogate processes. Shows as a legit looking process in Task Manager.
+* **Custom Memory Handling:** My own read only memory library (`Memory.cs`) with caching for speed. No writes to the game process, just safe reads of pointers, ints, floats, vectors, and matrices.
+* **Custom Entity Management:** Full entity system (`Entity.cs`, `EntityManager.cs`) to track players, bones, health, teams, etc. Includes world to screen math and distance calculations. Threaded and locked for smooth updates.
+* **Visual Overlays (ESP):** Box ESP and Bone ESP drawn on a transparent topmost window (`Overlay.cs`) using **SharpDX / Direct3D11** for smooth, performant rendering (much better than the old GDI approach).
+* **Aim Assist (Implemented — Disabled):** Humanized, smoothed aim behavior with an FOV circle. **Disabled by default** until we confirm it's safe with VAC-NET.
+* **Recoil Control System (RCS) (Implemented — Disabled):** RCS added, but **disabled by default** until verified safe.
+* **Embedded Dependencies:** All NuGet assemblies are embedded into the `.exe` via **Costura.Fody** — no extra DLLs required.
+* **Interactive Console Menu:** Toggle features at runtime using the console menu, type the corresponding number to enable/disable a function. No rebuild required!
+* **Cross-Platform Vibes:** Tested on Windows 10 & 11; can run on Steam Deck (build on Windows, transfer exe).
 
-- **Custom Entity Management:** Built a full entity system (`Entity.cs` and `EntityManager.cs`) to track players, positions, bones, health, teams, you name it. World to screen conversion, bone reading for skeleton ESP, and distance calcs. All threaded and locked for smoothness.
+---
 
-- **Auto Updating Offsets:** Grabs the latest offsets from the public A2X GitHub repo (`OffsetGrabber.cs`) on startup. No manual updates needed, it parses and applies them dynamically.
+## Releases
 
-- **Visual Overlays (ESP):** Box ESP and Bone ESP drawn on a transparent topmost window (`Overlay.cs`). Customizable colors, thickness, and toggles. Yeah, it's a bit FPS heavy in full matches right now (noted for optimization), but it looks sick for only using GDI..
+Official releases are available on the repository's Releases page. Each release contains the compiled `Microsoft.COM.Surogate.exe` for that version:
 
-- **Aim Assist:** Smooth, beyond humanized aim with FOV circle. Locks on heads with a touch of randomness, feels natural, not robotic! (The plan is to bypass the "future AI anti cheat")
+* Visit the repo Releases to download prebuilt versions (recommended if you don't want to build from source).
+* Releases are tagged by version (for example: `v1.0-beta`, `v1.1-beta`, etc.).
+* Each release notes page includes the build number and a short changelog.
 
-- **No Dependencies:** Zero NuGet packages, no external DLLs. Just C# .NET 4.8 Framework and what's in the box. Compile and run, that's it! Only 48KB/s fully compiled as a .exe!!
+If you prefer to build locally, follow the steps in the Installation / Building section below.
 
-- **Cross Platform Vibes:** Tested on Windows 10 & 11, and guess what? It even works on Steam Deck..
+---
 
 ## Screenshots
 
 ### UI Settings
-![UI Screenshot](https://i.imgur.com/rc88Plr.png)
 
-### In-Game ESP and Aim Assist
-![In Game Screenshot](https://i.imgur.com/aifG9yM.jpeg)
+![UI Screenshot](https://i.imgur.com/BEEUYkF.png)
+
+### In Game ESP
+
+![In Game Screenshot](https://i.imgur.com/K51xhY3.jpeg)
+
+---
 
 ## Steam Deck Compatibility
 
-Who says cheats can't be portable? I got this running on my Steam Deck – just build it on Windows, transfer the exe, and run. ESP overlays work, aim assist snaps, and it doesn't overheat the thing. Here's a quick demo video:
+It runs on Steam Deck — build on Windows, move the `.exe` to the device, and run. Overlays work and it runs without spiking temps in my tests. Demo video:
 [![SmokeySense on Steam Deck](https://i.imgur.com/9Gi54j5.png)](https://streamable.com/efdqtv)
+
+---
 
 ## Installation / Building
 
-No releases yet? No problem, build it yourself in Visual Studio. It's straight forward since there are no deps!
+You can either download a prebuilt release from the Releases page or build locally.
 
-1. **Prerequisites:**
-   - Visual Studio 2022.
-   - .NET Framework 4.8.
-   - CS2 installed and running.
+### Prerequisites
 
-2. **Clone the Repo:**
-   ```
-   git clone https://github.com/yourusername/SmokeySense.git
-   ```
+* Visual Studio 2022
+* .NET Framework 4.8
+* CS2 installed and running
 
-3. **Open in Visual Studio:**
-   - Open VS and open the `.sln` file in the repo.
-   - Set the project to **Release** mode.
+### Clone the Repo
 
-4. **Build the Project:**
-   - Hit **Build > Build Solution** (or Ctrl+Shift+B).
-   - Grab the exe from `bin/Release/Microsoft.COM.Surogate.exe` (yep, that's the disguise).
+```bash
+git clone https://github.com/TrentonHill/Smokey-Sense
+```
 
-5. **Run It:**
-   - Launch CS2 first.
-   - Run the exe as admin (for memory access).
-   - Console will show init messages, offsets updating, etc.
-   - Overlay appears if features are enabled (check `Functions.cs` for defaults).
+### Build (Local)
 
-## Usage
+1. Open the solution (`.sln`) in Visual Studio.
+2. Set the project configuration to **Release**.
+3. Build: `Build -> Build Solution` (or Ctrl+Shift+B).
+4. Built binary: `bin/Release/Microsoft.COM.Surogate.exe` (this exe contains embedded references via Costura.Fody).
 
-- **Starting Up:** Run the exe while CS2 is open (Dose not matter if you are in a match or at the menu). It'll hook in, update offsets, and start the overlay.
-- **Toggles:** Use keys like Left Shift for aim assist (configurable in `Functions.cs`).
-- **Customization:** Edit `Functions.cs` for Aim Assist Enable or Disable plus ESP and colors, FOV size, smoothing, etc. Rebuild to apply!
-- **In-Game:** Enable ESP/bones for visuals, aim assist for... assistance. Make sure to hold the toggle key down for aim assist.
-- **Exit:** Close the console window.
+> **Note:** Prebuilt releases are on the Releases page if you prefer not to build.
+
+---
+
+## Running
+
+1. Start CS2 first (menu or in-game).
+2. Run `Microsoft.COM.Surogate.exe` as Administrator (required for memory access).
+3. Console will show initialization messages and offset updates.
+4. Overlay will appear if ESP is enabled.
+
+---
+
+## Usage & Controls
+
+* **Interactive Console Menu:** When the program is running it exposes a console based menu. Type the number for the feature you want to toggle and press Enter. The menu controls enabling/disabling for ESP, Bones, Aim Assist (if enabled), RCS (if enabled), and other features. No need to re-edit `Functions.cs` for day to day toggles.
+* **Default Keys:** There are a few default keybinds for quick toggles (see `Functions.cs`) — but the console menu is the recommended way to toggle at runtime.
+* **Aim Assist & RCS:** Both features exist in the codebase but are **disabled by default**. They will remain disabled until explicit verification that they are safe from detection signals introduced by VAC-NET.
+* **Advanced Customization:** If you want to change defaults, `Functions.cs` contains the config and default keybinds, advanced users can edit and rebuild. For most users, use the runtime console menu.
