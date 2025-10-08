@@ -676,7 +676,7 @@ public class Overlay : IDisposable
         {
             Thread.Sleep(3000);
             IntPtr globalVars = memory.ReadPointer(memory.GetModuleBase() + Offsets.dwGlobalVars);
-            IntPtr currentMapName = memory.ReadPointer(globalVars + 0x188);
+            IntPtr currentMapName = memory.ReadPointer(globalVars + 0x180);
             string currentMap = memory.ReadString(currentMapName);
             Console.WriteLine($"[i]: Current Map Name: {currentMap}"); // NOT WORKING ;(
 
