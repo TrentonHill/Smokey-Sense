@@ -166,7 +166,6 @@ namespace Microsoft.COM.Surogate.Data
                 dwEntityList = (int)Get("ClientDll.dwEntityList");
                 m_modelState = (int)Get("CSkeletonInstance.m_modelState");
                 m_pGameSceneNode = (int)Get("C_BaseEntity.m_pGameSceneNode");
-
                 shotsFired = (int)Get("C_CSPlayerPawn.m_iShotsFired");
                 dwSensitivity = (int)Get("ClientDll.dwSensitivity");
                 dwSensitivity_sensitivity = (int)Get("ClientDll.dwSensitivity_sensitivity");
@@ -174,6 +173,7 @@ namespace Microsoft.COM.Surogate.Data
                 m_aimPunchCache = (int)Get("C_CSPlayerPawn.m_aimPunchCache");
                 m_aimPunchAngle = (int)Get("C_CSPlayerPawn.m_aimPunchAngle");
                 dwViewAngles = (int)Get("ClientDll.dwViewAngles");
+                dwGlobalVars = (int)Get("ClientDll.dwGlobalVars");
 
                 await Task.CompletedTask;
             }
@@ -196,8 +196,6 @@ namespace Microsoft.COM.Surogate.Data
         public static int dwEntityList = 0x00;  // Entity list pointer
         public static int m_modelState = 0x00;  // Model state
         public static int m_pGameSceneNode = 0x00;  // Game scene node pointer
-
-        // Recoil Control offsets
         public static int shotsFired = 0x00;
         public static int dwSensitivity = 0x00;
         public static int dwSensitivity_sensitivity = 0x00;
@@ -205,5 +203,6 @@ namespace Microsoft.COM.Surogate.Data
         public static int m_aimPunchCache = 0x00;
         public static int m_aimPunchAngle = 0x00;
         public static int dwViewAngles = 0x00;
+        public static int dwGlobalVars = 0x00;
     }
 }

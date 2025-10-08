@@ -325,6 +325,15 @@ public class Overlay : IDisposable
         renderThread.Start();
         Console.Write(" (✓)\n");
 
+        Console.Write("[i]: Initializing Map Handler!");
+        Thread mapHandler = new Thread(BackgroundMapHandler)
+        {
+            IsBackground = true,
+            Priority = ThreadPriority.Normal
+        };
+        mapHandler.Start();
+        Console.Write(" (✓)\n");
+
         Console.WriteLine("[i]: Initialization Complete. You may now play the game!");
         Thread.Sleep(3000);
 
@@ -591,12 +600,12 @@ public class Overlay : IDisposable
                 }
             }
 
-            if (Functions.AimAssistEnabled) // Need to add support for toggle keys, last keyboard hook caused issues.
+            if (Functions.AimAssistEnabled) 
             {
-                
+                // Add logic for vischeck from Vischeck.IsVisable() in the VisCheck.cs class
             }
 
-            if (Functions.RecoilControlEnabled) // Do not use until we finish and confrim its undetected!
+            if (Functions.RecoilControlEnabled) 
             {
                 //float Strength = 100f; // percent (1 == 100%, 0.5 == 50%)
                 //float Smoothing = 5f;
@@ -658,6 +667,20 @@ public class Overlay : IDisposable
             Console.WriteLine("[ERROR]: " + ex.Message);
             Thread.Sleep(5000);
             Environment.Exit(1);
+        }
+    }
+
+    public void BackgroundMapHandler()
+    {
+        while (true)
+        {
+            Thread.Sleep(3000);
+            IntPtr globalVars = memory.ReadPointer(memory.GetModuleBase() + Offsets.dwGlobalVars);
+            IntPtr currentMapName = memory.ReadPointer(globalVars + 0x188);
+            string currentMap = memory.ReadString(currentMapName);
+            Console.WriteLine($"[i]: Current Map Name: {currentMap}"); // NOT WORKING ;(
+
+            // If we can get the correct map name we can then check if its one of the maps that we already have its GLB data too and if so set it as the current map for vischeck's IsVisable to be setup and work correctly
         }
     }
 

@@ -71,6 +71,18 @@ public class Memory
         return IntPtr.Zero;
     }
 
+    public string ReadString(IntPtr addy, int maxLength = 256)
+    {
+        byte[] buffer = new byte[maxLength];
+        if (ReadProcessMemory(proc.Handle, addy, buffer, buffer.Length, IntPtr.Zero))
+        {
+            int nullIndex = Array.IndexOf(buffer, (byte)0);
+            if (nullIndex < 0) nullIndex = maxLength;
+            return System.Text.Encoding.UTF8.GetString(buffer, 0, nullIndex);
+        }
+        return string.Empty;
+    }
+
     public IntPtr ReadPointer(IntPtr addy)  // Read a pointer from memory
     {
         byte[] array = new byte[8];

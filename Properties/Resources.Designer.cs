@@ -63,9 +63,49 @@ namespace Microsoft.COM.Surogate.Properties {
         /// <summary>
         ///   Looks up a localized resource of type System.Byte[].
         /// </summary>
+        internal static byte[] cli {
+            get {
+                object obj = ResourceManager.GetObject("cli", resourceCulture);
+                return ((byte[])(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.Byte[].
+        /// </summary>
         internal static byte[] dumper {
             get {
                 object obj = ResourceManager.GetObject("dumper", resourceCulture);
+                return ((byte[])(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.Byte[].
+        /// </summary>
+        internal static byte[] libSkiaSharp {
+            get {
+                object obj = ResourceManager.GetObject("libSkiaSharp", resourceCulture);
+                return ((byte[])(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.Byte[].
+        /// </summary>
+        internal static byte[] spirv_cross {
+            get {
+                object obj = ResourceManager.GetObject("spirv_cross", resourceCulture);
+                return ((byte[])(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.Byte[].
+        /// </summary>
+        internal static byte[] TinyEXRNative {
+            get {
+                object obj = ResourceManager.GetObject("TinyEXRNative", resourceCulture);
                 return ((byte[])(obj));
             }
         }
