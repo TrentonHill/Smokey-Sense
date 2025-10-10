@@ -165,9 +165,8 @@ public class EntityManager
             return null;
 
         Vector2 screenSize = new Vector2(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
-        Vector2 pos2D = WorldToScreen(cachedViewMatrix, pos, screenSize);
         Vector2 head2D = WorldToScreen(cachedViewMatrix, Vector3.Add(pos, viewOffset), screenSize);
-        if (pos2D.X == -99f || head2D.X == -99f) return null;
+        if (head2D.X == -99f) return null;
 
         IntPtr sceneNode = memory.ReadPointer(pawnAddress, Offsets.m_pGameSceneNode);
         if (sceneNode == IntPtr.Zero) return null;
@@ -189,7 +188,6 @@ public class EntityManager
             position = pos,
             origin = pos,
             view = viewOffset,
-            position2D = pos2D,
             head2D = head2D,
             distance = Vector3.Distance(memory.ReadVec(localPlayer.PawnAddress, Offsets.m_vOldOrigin), pos),
             bones = bones,

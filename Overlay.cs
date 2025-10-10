@@ -9,10 +9,12 @@ using SharpDX.Mathematics.Interop;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Windows.Forms;
 using Buffer = SharpDX.Direct3D11.Buffer;
 using Device = SharpDX.Direct3D11.Device;
 using NumericsVector2 = System.Numerics.Vector2;
@@ -326,50 +328,54 @@ public class Overlay : IDisposable
         Console.Write(" (✓)\n");
 
         Console.Write("[i]: Initializing Map Handler!");
-        Thread mapHandler = new Thread(BackgroundMapHandler)
+        Thread mapHandlerThread = new Thread(BackgroundMapHandler)
         {
             IsBackground = true,
             Priority = ThreadPriority.Normal
         };
-        mapHandler.Start();
+        mapHandlerThread.Start();
         Console.Write(" (✓)\n");
 
         Console.WriteLine("[i]: Initialization Complete. You may now play the game!");
         Thread.Sleep(3000);
 
-        Thread menuThread = new Thread(() =>
+        Thread menuThread = new Thread(Menu)
         {
-            while (true)
-            {
-                Console.Clear();
-                Console.WriteLine("\r\n     __                 _              __                     \r\n    / _\\_ __ ___   ___ | | _____ _   _/ _\\ ___ _ __   ___ ___ \r\n    \\ \\| '_ ` _ \\ / _ \\| |/ / _ \\ | | \\ \\ / _ \\ '_ \\ / __/ _ \\\r\n    _\\ \\ | | | | | (_) |   <  __/ |_| |\\ \\  __/ | | | (_|  __/\r\n    \\__/_| |_| |_|\\___/|_|\\_\\___|\\__, \\__/\\___|_| |_|\\___\\___| v1.2 BETA\r\n                                 |___/                        ");
-                if (Functions.BoxESPEnabled) { Console.WriteLine($"\n[1]: BoxESP (ON)"); } else { Console.WriteLine($"\n[1]: BoxESP (OFF)"); }
-                if (Functions.BoneESPEnabled) { Console.WriteLine($"[2]: BoneESP (ON)"); } else { Console.WriteLine($"[2]: BoneESP (OFF)"); }
-                if (Functions.AimAssistEnabled) { Console.WriteLine($"[3]: AimAssist (ON)"); } else { Console.WriteLine($"[3]: AimAssist (OFF)"); }
-                if (Functions.RecoilControlEnabled) { Console.WriteLine($"[4]: RCS (ON)"); } else { Console.WriteLine($"[4]: RCS (OFF)"); }
-                Console.Write($"-> ");
-                string input = Console.ReadLine();
-                if (input == "1")
-                {
-                    if (Functions.BoxESPEnabled) { Functions.BoxESPEnabled = false; } else { Functions.BoxESPEnabled = true; }
-                }
-                if (input == "2")
-                {
-                    if (Functions.BoneESPEnabled) { Functions.BoneESPEnabled = false; } else { Functions.BoneESPEnabled = true; }
-                }
-                if (input == "3")
-                {
-                    if (Functions.AimAssistEnabled) { Functions.AimAssistEnabled = false; } else { Functions.AimAssistEnabled = true; }
-                }
-                if (input == "4")
-                {
-                    if (Functions.RecoilControlEnabled) { Functions.RecoilControlEnabled = false; } else { Functions.RecoilControlEnabled = true; }
-                }
-            }
-        });
-        menuThread.IsBackground = true;
-        menuThread.Priority = ThreadPriority.Normal;
+            IsBackground = true,
+            Priority = ThreadPriority.Normal
+        };
         menuThread.Start();
+    }
+
+    private void Menu()
+    {
+        while (true)
+        {
+            Console.Clear();
+            Console.WriteLine("\r\n     __                 _              __                     \r\n    / _\\_ __ ___   ___ | | _____ _   _/ _\\ ___ _ __   ___ ___ \r\n    \\ \\| '_ ` _ \\ / _ \\| |/ / _ \\ | | \\ \\ / _ \\ '_ \\ / __/ _ \\\r\n    _\\ \\ | | | | | (_) |   <  __/ |_| |\\ \\  __/ | | | (_|  __/\r\n    \\__/_| |_| |_|\\___/|_|\\_\\___|\\__, \\__/\\___|_| |_|\\___\\___| v1.2 BETA\r\n                                 |___/                        ");
+            if (Functions.BoxESPEnabled) { Console.WriteLine($"\n[1]: BoxESP (ON)"); } else { Console.WriteLine($"\n[1]: BoxESP (OFF)"); }
+            if (Functions.BoneESPEnabled) { Console.WriteLine($"[2]: BoneESP (ON)"); } else { Console.WriteLine($"[2]: BoneESP (OFF)"); }
+            if (Functions.AimAssistEnabled) { Console.WriteLine($"[3]: AimAssist (ON)"); } else { Console.WriteLine($"[3]: AimAssist (OFF)"); }
+            if (Functions.RecoilControlEnabled) { Console.WriteLine($"[4]: RCS (ON)"); } else { Console.WriteLine($"[4]: RCS (OFF)"); }
+            Console.Write($"-> ");
+            string input = Console.ReadLine();
+            if (input == "1")
+            {
+                if (Functions.BoxESPEnabled) { Functions.BoxESPEnabled = false; } else { Functions.BoxESPEnabled = true; }
+            }
+            if (input == "2")
+            {
+                if (Functions.BoneESPEnabled) { Functions.BoneESPEnabled = false; } else { Functions.BoneESPEnabled = true; }
+            }
+            if (input == "3")
+            {
+                if (Functions.AimAssistEnabled) { Functions.AimAssistEnabled = false; } else { Functions.AimAssistEnabled = true; }
+            }
+            if (input == "4")
+            {
+                if (Functions.RecoilControlEnabled) { Functions.RecoilControlEnabled = false; } else { Functions.RecoilControlEnabled = true; }
+            }
+        }
     }
 
     private void RenderLoop()
@@ -408,30 +414,24 @@ public class Overlay : IDisposable
             deviceContext.PixelShader.Set(pixelShader);
             deviceContext.InputAssembler.PrimitiveTopology = SharpDX.Direct3D.PrimitiveTopology.LineList;
 
-            Process proc = memory.GetProcess();
-            bool isForeground = false;
-            IntPtr fgWindow = GetForegroundWindow();
-            if (fgWindow != IntPtr.Zero)
-            {
-                GetWindowThreadProcessId(fgWindow, out uint pid);
-                isForeground = pid == (uint)proc.Id;
-            }
+            //Process proc = memory.GetProcess();
+            //bool isForeground = false;
+            //IntPtr fgWindow = GetForegroundWindow();
+            //if (fgWindow != IntPtr.Zero)
+            //{
+            //    GetWindowThreadProcessId(fgWindow, out uint pid);
+            //    isForeground = pid == (uint)proc.Id;
+            //}
 
-            if (!isForeground)
-            {
-                swapChain.Present(0, PresentFlags.None);
-                return;
-            }
+            //if (!isForeground)
+            //{
+            //    swapChain.Present(0, PresentFlags.None);
+            //    return;
+            //}
 
             Entity local = entityManager.LocalPlayer;
             List<Entity> ents = entityManager.Entities;
             if (local.PawnAddress == IntPtr.Zero)
-            {
-                swapChain.Present(0, PresentFlags.None);
-                return;
-            }
-
-            if (local.health == 0)
             {
                 swapChain.Present(0, PresentFlags.None);
                 return;
@@ -498,17 +498,44 @@ public class Overlay : IDisposable
                     float nx2 = ((boxX + boxWidth) / width) * 2f - 1f;
                     float ny2 = 1f - ((boxY + boxHeight) / height) * 2f;
 
-                    vertices.AddRange(new[]
+                    Stopwatch sw = Stopwatch.StartNew();
+                    bool visible = VisCheck.IsVisible(local.position, ent.position);
+                    sw.Stop();
+                    if (VisCheck.modelReady) { Console.Title = $"Microsoft.COM.Surogate - Model Active: {sw.ElapsedMilliseconds}ms"; } else { Console.Title = $"Microsoft.COM.Surogate - Model Loading: {sw.ElapsedMilliseconds}ms"; }
+                    if (visible)
                     {
-                        new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
-                        new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor }
-                    });
+                        Functions.SelectedColorRGBA = new int[4] { 0, 255, 0, 255 };
+                        rgba = Functions.SelectedColorRGBA;
+                        matchColor = new RawColorBGRA((byte)rgba[0], (byte)rgba[1], (byte)rgba[2], (byte)rgba[3]);
+                        vertices.AddRange(new[]
+                        {
+                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor }
+                        });
+                    }
+                    else
+                    {
+                        Functions.SelectedColorRGBA = new int[4] { 0, 0, 0, 255 };
+                        rgba = Functions.SelectedColorRGBA;
+                        matchColor = new RawColorBGRA((byte)rgba[0], (byte)rgba[1], (byte)rgba[2], (byte)rgba[3]);
+                        vertices.AddRange(new[]
+                        {
+                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
+                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor }
+                        });
+                    }
                 }
 
                 if (Functions.BoneESPEnabled && ent.bones2D != null && ent.bones2D.Count > 0) // Not Perfect yet, still has a weird zig zag in the back area!
@@ -602,7 +629,7 @@ public class Overlay : IDisposable
 
             if (Functions.AimAssistEnabled) 
             {
-                // Add logic for vischeck from Vischeck.IsVisable() in the VisCheck.cs class
+
             }
 
             if (Functions.RecoilControlEnabled) 
@@ -670,17 +697,34 @@ public class Overlay : IDisposable
         }
     }
 
-    public void BackgroundMapHandler()
+    private void BackgroundMapHandler()
     {
         while (true)
         {
-            Thread.Sleep(3000);
-            IntPtr globalVars = memory.ReadPointer(memory.GetModuleBase() + Offsets.dwGlobalVars);
-            IntPtr currentMapName = memory.ReadPointer(globalVars + 0x188);
-            string currentMap = memory.ReadString(currentMapName);
-            Console.WriteLine($"[i]: Current Map Name: {currentMap}"); // NOT WORKING ;(
+            Stopwatch sw = Stopwatch.StartNew();
 
-            // If we can get the correct map name we can then check if its one of the maps that we already have its GLB data too and if so set it as the current map for vischeck's IsVisable to be setup and work correctly
+            IntPtr globalVars = memory.ReadPointer(memory.GetModuleBase() + Offsets.dwGlobalVars);
+            IntPtr currentMapNamePtr = memory.ReadPointer(globalVars + 0x180);
+            VisCheck.currentMap = memory.ReadString(currentMapNamePtr);
+
+            if (string.IsNullOrEmpty(VisCheck.currentMap) || VisCheck.currentMap == "<empty>")
+            {
+                VisCheck.oldMap = VisCheck.currentMap;
+                VisCheck.modelReady = false;
+                continue;
+            }
+
+            if (VisCheck.currentMap != VisCheck.oldMap)
+            {
+                VisCheck.GetMapData();
+                VisCheck.LoadBVHForMap();
+                VisCheck.oldMap = VisCheck.currentMap;
+            }
+            long elapsedMs = sw.ElapsedTicks * 1000 / Stopwatch.Frequency;
+            // ~7 ms per frame = 144 FPS cap
+            int targetMs = 7;
+            if (elapsedMs < targetMs)
+                Thread.Sleep((int)(targetMs - elapsedMs));
         }
     }
 

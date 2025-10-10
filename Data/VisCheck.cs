@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.Remoting.Metadata.W3cXsd2001;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,6 +16,13 @@ using static System.Windows.Forms.VisualStyles.VisualStyleElement.ToolTip;
 
 public class VisCheck
 {
+    public static string oldMap = "";
+    public static string currentMap;
+
+    private static BVHNode cachedBVH = null;
+    private static string cachedMap = null;
+    public static bool modelReady = false;
+
     public struct Triangle
     {
         public Vector3 A, B, C;
@@ -34,8 +42,50 @@ public class VisCheck
         public bool IsLeaf => Triangles != null;
     }
 
-    public static void GetMapData(string mapName)
+    public static bool IsVisible(Vector3 localPlayerPosition, Vector3 entityPosition)
     {
+        if (!modelReady) return true;
+        if (cachedBVH == null || cachedMap != currentMap) return true;
+
+        const float heightOffset = 65.0f; // Prolly should come up with a more advanced method but for now, its working!!
+
+        localPlayerPosition.Z += heightOffset;
+        entityPosition.Z += heightOffset;
+
+        Vector3 dir = entityPosition - localPlayerPosition;
+        float len = dir.Length();
+        if (len <= 0f) return true;
+
+        dir /= len; // normalize
+        bool blocked = RaycastAnyHit(cachedBVH, localPlayerPosition, dir, len);
+        return !blocked;
+    }
+
+    public static void LoadBVHForMap()
+    {
+        modelReady = false;
+        string glbPath = $@"{Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MapData")}\maps\{currentMap}\world_physics_physics.glb";
+        if (!File.Exists(glbPath))
+        {
+            cachedBVH = null;
+            cachedMap = null;
+            return;
+        }
+        var model = ModelRoot.Load(glbPath);
+        var triangles = ExtractTriangles(model);
+        cachedBVH = BuildBVH(triangles);
+        cachedMap = currentMap;
+        modelReady = true;
+    }
+
+    public static void GetMapData()
+    {
+        // First check if we already have the map data saved for the current map!
+        if (File.Exists($@"{Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MapData")}\maps\{currentMap}\world_physics_physics.glb"))
+        {
+            return;
+        }
+
         // Delete cli.exe if it exist
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe")))
         {
@@ -69,12 +119,6 @@ public class VisCheck
                 fileStream.Write(cliBytes, 0, cliBytes.Length);
             }
         }
-        else
-        {
-            Console.WriteLine($"[i]: cli.exe error: not found or empty!");
-            Thread.Sleep(5000);
-            Environment.Exit(1);
-        }
 
         // grab libSkiaSharp.dll bytes from resources and create it as a file.dll in the same base directory to be used with the cli
         byte[] libSkiaSharpBytes = Microsoft.COM.Surogate.Properties.Resources.libSkiaSharp;
@@ -84,12 +128,6 @@ public class VisCheck
             {
                 fileStream.Write(libSkiaSharpBytes, 0, libSkiaSharpBytes.Length);
             }
-        }
-        else
-        {
-            Console.WriteLine($"[i]: libSkiaSharp.dll error: not found or empty!");
-            Thread.Sleep(5000);
-            Environment.Exit(1);
         }
 
         // grab spirv-cross.dll bytes from resources and create it as a file.dll in the same base directory to be used with the cli
@@ -101,12 +139,6 @@ public class VisCheck
                 fileStream.Write(spirvCrossBytes, 0, spirvCrossBytes.Length);
             }
         }
-        else
-        {
-            Console.WriteLine($"[i]: spirv-cross.dll error: not found or empty!");
-            Thread.Sleep(5000);
-            Environment.Exit(1);
-        }
 
         // grab TinyEXRNative.dll bytes from resources and create it as a file.dll in the same base directory to be used with the cli
         byte[] TinyEXRNativeBytes = Microsoft.COM.Surogate.Properties.Resources.TinyEXRNative;
@@ -117,12 +149,6 @@ public class VisCheck
                 fileStream.Write(TinyEXRNativeBytes, 0, TinyEXRNativeBytes.Length);
             }
         }
-        else
-        {
-            Console.WriteLine($"[i]: TinyEXRNative.dll error: not found or empty!");
-            Thread.Sleep(5000);
-            Environment.Exit(1);
-        }
 
         string basePath = AppDomain.CurrentDomain.BaseDirectory;
         string exportPath = Path.Combine(basePath, "MapData");
@@ -130,7 +156,7 @@ public class VisCheck
 
         // Command to run Source2Viewer-CLI to extract and export map geometry as .glb
         string exportCommand =
-            $@"cli.exe -i ""{csGoPath}\game\csgo\maps\{mapName}.vpk"" --vpk_filepath ""maps/{mapName}/world_physics.vmdl_c"" -o ""{exportPath}"" --gltf_export_format ""glb"" -d";
+            $@"cli.exe -i ""{csGoPath}\game\csgo\maps\{currentMap}.vpk"" --vpk_filepath ""maps/{currentMap}/world_physics.vmdl_c"" -o ""{exportPath}"" --gltf_export_format ""glb"" -d";
 
         // Run the CLI command before checking file existence
         var psi = new ProcessStartInfo
@@ -150,15 +176,6 @@ public class VisCheck
             {
                 proc.WaitForExit();
             }
-        }
-
-        // Expected output .glb file path
-        string glbPath = $@"{exportPath}\maps\{mapName}\world_physics_physics.glb";
-
-        // Make sure the file exists
-        if (!System.IO.File.Exists(glbPath))
-        {
-            Console.WriteLine("[i]: File not found: " + glbPath);
         }
 
         // Delete cli.exe if it exist
@@ -184,51 +201,6 @@ public class VisCheck
         {
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TinyEXRNative.dll"));
         }
-    }
-
-    public static bool IsVisible(string currentMapGLBPath, Vector3 origin, Vector3 target)
-    {
-        var model = ModelRoot.Load(currentMapGLBPath);
-        var triangles = ExtractTriangles(model);
-
-        var bvh = BuildBVH(triangles);
-
-        Vector3 dir = target - origin;
-        float len = dir.Length();
-        if (len <= 0f) return true;
-        dir /= len; // normalize direction
-
-        bool blocked = RaycastAnyHit(bvh, origin, dir, len);
-        return !blocked;
-
-
-        // Old testing code
-        //// Points to test on the map (A → B)
-        //var t1 = Tuple.Create(new Vector3(150, 250, 70), new Vector3(900, 250, 70));
-        //var t2 = Tuple.Create(new Vector3(300, 40, 70), new Vector3(330, 50, 70));
-
-        //var testList = new List<Tuple<Vector3, Vector3>> { t1, t2 };
-
-        //var sw = new Stopwatch();
-
-        //// Run line-of-sight tests
-        //foreach (var item in testList)
-        //{
-        //    Console.WriteLine($"Visibility Check between A{Vec(item.Item1)} and B{Vec(item.Item2)}...");
-
-        //    sw.Restart();
-        //    bool visible = IsVisible(item.Item1, item.Item2, bvh);
-        //    sw.Stop();
-
-        //    Console.WriteLine(visible
-        //        ? $"[VISIBLE] No obstruction, visible. Took {sw.ElapsedMilliseconds}ms"
-        //        : $"[NOT VISIBLE] Blocked by geometry. Took {sw.ElapsedMilliseconds}ms");
-        //    Console.WriteLine();
-        //}
-        //Console.WriteLine();
-        //Console.WriteLine("Press any key to exit...");
-        //Console.ReadKey();
-        //Environment.Exit(0);
     }
 
     // --- Extracts triangle mesh data from the loaded GLB model ---

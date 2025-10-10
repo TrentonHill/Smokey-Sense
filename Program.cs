@@ -48,33 +48,28 @@ internal static class Program
                 // Entity Manager Background Thread
                 Thread updateThread = new Thread(() =>
                 {
-                    Stopwatch sw = Stopwatch.StartNew();
                     while (true)
                     {
-                        Process proc = memory.GetProcess();
-                        bool isForeground = false;
-                        IntPtr fgWindow = GetForegroundWindow();
-                        if (fgWindow != IntPtr.Zero)
+                        //Process proc = memory.GetProcess();
+                        //bool isForeground = false;
+                        //IntPtr fgWindow = GetForegroundWindow();
+                        //if (fgWindow != IntPtr.Zero)
+                        //{
+                        //    GetWindowThreadProcessId(fgWindow, out uint pid);
+                        //    isForeground = pid == (uint)proc.Id;
+                        //}
+                        Stopwatch sw = Stopwatch.StartNew();
+                        if ((Functions.BoxESPEnabled || Functions.BoneESPEnabled || Functions.AimAssistEnabled || Functions.RecoilControlEnabled)) //&& isForeground)
                         {
-                            GetWindowThreadProcessId(fgWindow, out uint pid);
-                            isForeground = pid == (uint)proc.Id;
-                        }
-                        if ((Functions.BoxESPEnabled || Functions.BoneESPEnabled || Functions.AimAssistEnabled) && isForeground)
-                        {
-                            long startMs = sw.ElapsedTicks * 1000 / Stopwatch.Frequency;
                             List<Entity> entities = entityManager.GetEntities();
                             Entity local = entityManager.GetLocalPlayer();
                             entityManager.UpdateLocalPlayer(local);
                             entityManager.UpdateEntities(entities);
-                            long elapsedMs = (sw.ElapsedTicks * 1000 / Stopwatch.Frequency) - startMs;
+                            long elapsedMs = sw.ElapsedTicks * 1000 / Stopwatch.Frequency;
                             // ~7 ms per frame = 144 FPS cap
                             int targetMs = 7;
                             if (elapsedMs < targetMs)
                                 Thread.Sleep((int)(targetMs - elapsedMs));
-                        }
-                        else
-                        {
-                            Thread.Sleep(1000);
                         }
                     }
                 });
