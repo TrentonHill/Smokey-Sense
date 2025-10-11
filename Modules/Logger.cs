@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -8,7 +9,7 @@ namespace Microsoft.COM.Surogate.Modules
 {
     internal static class Logger
     {
-        public static LogLevel MinimumLogLevel { get; set; } = LogLevel.Debug;
+        public static LogLevel MinimumLogLevel { get; set; } = Debugger.IsAttached ? LogLevel.Debug : LogLevel.Info;
 
         public enum LogLevel
         {

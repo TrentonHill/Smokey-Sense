@@ -50,21 +50,38 @@ public class Overlay : IDisposable
     private BlendState blendState;
     private static Vector3 OldPunch = Vector3.Zero;
 
-    // === Ajouts: VB dynamique persistant + staging + cache visibilité ===
+    // VB dynamique + staging
     private Buffer dynamicVertexBuffer;
-    private int maxVertices = 65536; // capacité initiale (augmentée à la volée si nécessaire)
+    private int maxVertices = 65536;
     private Vertex[] vertexStaging;
     private readonly List<Vertex> frameVertices = new List<Vertex>(4096);
-    // Modifié: on stocke la position entité + locale
+
+    // Cache visibilité (entité + joueur local)
     private struct VisCacheEntry { public NumericsVector3 EntPos; public NumericsVector3 LocalPos; public bool Visible; public int Stamp; }
     private readonly Dictionary<IntPtr, VisCacheEntry> visCache = new Dictionary<IntPtr, VisCacheEntry>(128);
 
-    // Connections d’os statiques (évite l’allocation par frame)
+    // Buffers réutilisés pour éviter les allocs par frame
+    private readonly List<(Entity ent, float nx1, float ny1, float nx2, float ny2, bool? cachedVisible)> boxesBuf = new List<(Entity, float, float, float, float, bool?)>(64);
+    private readonly List<Entity> toComputeBuf = new List<Entity>(32);
+
+    // Connections d’os statiques
     private static readonly (int, int)[] BoneConnections = new (int, int)[17]
     {
         (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (4, 6), (6, 7), (7, 8), (8, 9),
         (4, 10), (10, 11), (11, 12), (12, 13), (0, 14), (14, 15), (0, 16), (16, 17)
     };
+
+    // Cache taille fenêtre + throttle logs/titre via Stopwatch
+    private float cachedWidth, cachedHeight;
+    private int lastWndSizeTick;
+    private static readonly Stopwatch sClock = Stopwatch.StartNew();
+    private long lastRenderLogMs = -500; // 1er log immédiat
+    private long lastTitleLogMs = -2000; // 1er titre immédiat
+
+    // FOV pré-calcul (cos/sin)
+    private const int FovSegments = 32;
+    private static readonly float[] FovCos = new float[FovSegments + 1];
+    private static readonly float[] FovSin = new float[FovSegments + 1];
 
     private const int WS_EX_LAYERED = 0x80000;
     private const int WS_EX_TRANSPARENT = 0x20;
@@ -206,6 +223,16 @@ public class Overlay : IDisposable
 
     private delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
+    static Overlay()
+    {
+        for (int i = 0; i <= FovSegments; i++)
+        {
+            float a = (float)(i * Math.PI * 2 / FovSegments);
+            FovCos[i] = (float)Math.Cos(a);
+            FovSin[i] = (float)Math.Sin(a);
+        }
+    }
+
     private IntPtr CustomWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
         switch (msg)
@@ -338,7 +365,7 @@ public class Overlay : IDisposable
             pixelShader = new PixelShader(d3dDevice, psBytecode);
         }
 
-        // === Init VB dynamique persistant ===
+        // VB dynamique persistant
         var vbDesc = new BufferDescription
         {
             Usage = ResourceUsage.Dynamic,
@@ -349,6 +376,11 @@ public class Overlay : IDisposable
         };
         dynamicVertexBuffer = new Buffer(d3dDevice, vbDesc);
         vertexStaging = new Vertex[maxVertices];
+
+        // Taille fenêtre initiale
+        cachedWidth = clientRect.Right - clientRect.Left;
+        cachedHeight = clientRect.Bottom - clientRect.Top;
+        lastWndSizeTick = Environment.TickCount;
 
         Thread renderThread = new Thread(RenderLoop)
         {
@@ -390,22 +422,10 @@ public class Overlay : IDisposable
             if (Functions.RecoilControlEnabled) { Console.WriteLine($"[4]: RCS (ON)"); } else { Console.WriteLine($"[4]: RCS (OFF)"); }
             Console.Write($"-> ");
             string input = Console.ReadLine();
-            if (input == "1")
-            {
-                Functions.BoxESPEnabled = !Functions.BoxESPEnabled;
-            }
-            if (input == "2")
-            {
-                Functions.BoneESPEnabled = !Functions.BoneESPEnabled;
-            }
-            if (input == "3")
-            {
-                Functions.AimAssistEnabled = !Functions.AimAssistEnabled;
-            }
-            if (input == "4")
-            {
-                Functions.RecoilControlEnabled = !Functions.RecoilControlEnabled;
-            }
+            if (input == "1") Functions.BoxESPEnabled = !Functions.BoxESPEnabled;
+            if (input == "2") Functions.BoneESPEnabled = !Functions.BoneESPEnabled;
+            if (input == "3") Functions.AimAssistEnabled = !Functions.AimAssistEnabled;
+            if (input == "4") Functions.RecoilControlEnabled = !Functions.RecoilControlEnabled;
         }
     }
 
@@ -418,9 +438,17 @@ public class Overlay : IDisposable
             RenderFrame();
             long elapsedMs = sw.ElapsedTicks * 1000 / Stopwatch.Frequency;
             int targetMs = 7; // ~144 FPS
-            if (elapsedMs < targetMs)
-                Thread.Sleep((int)(targetMs - elapsedMs));
-            Logger.LogDebug($"Render loop {1000 / sw.ElapsedMilliseconds} fps");
+            if (elapsedMs < targetMs) Thread.Sleep((int)(targetMs - elapsedMs));
+
+            // throttle console: 500 ms via Stopwatch
+            long nowMs = sClock.ElapsedMilliseconds;
+            if (nowMs - lastRenderLogMs >= 500)
+            {
+                double loopMs = sw.ElapsedTicks * 1000.0 / Stopwatch.Frequency;
+                double fps = loopMs > 0 ? 1000.0 / loopMs : 0;
+                Logger.LogDebug($"Render loop {fps:F0} fps");
+                lastRenderLogMs = nowMs;
+            }
         }
     }
 
@@ -430,9 +458,18 @@ public class Overlay : IDisposable
 
         try
         {
-            GetClientRect(hWnd, out RECT clientRect);
-            float width = clientRect.Right - clientRect.Left;
-            float height = clientRect.Bottom - clientRect.Top;
+            // MàJ taille fenêtre toutes les 250 ms (TickCount OK ici)
+            int nowTickLocal = Environment.TickCount;
+            if (nowTickLocal - lastWndSizeTick >= 250)
+            {
+                GetClientRect(hWnd, out RECT clientRect);
+                cachedWidth = clientRect.Right - clientRect.Left;
+                cachedHeight = clientRect.Bottom - clientRect.Top;
+                lastWndSizeTick = nowTickLocal;
+            }
+
+            float width = cachedWidth;
+            float height = cachedHeight;
 
             deviceContext.Rasterizer.SetViewport(new SharpDX.Viewport(0, 0, (int)width, (int)height, 0f, 1f));
             deviceContext.Rasterizer.State = rasterizerState;
@@ -458,7 +495,6 @@ public class Overlay : IDisposable
             Entity closestTarget = null;
             float minDist = float.MaxValue;
 
-            // Couleurs locales, éviter de muter Functions.SelectedColorRGBA dans la boucle
             RawColorBGRA colorSelected = new RawColorBGRA((byte)Functions.SelectedColorRGBA[0], (byte)Functions.SelectedColorRGBA[1], (byte)Functions.SelectedColorRGBA[2], (byte)Functions.SelectedColorRGBA[3]);
             RawColorBGRA colorVisible = new RawColorBGRA(0, 255, 0, 255);
             RawColorBGRA colorHidden = new RawColorBGRA(0, 0, 0, 255);
@@ -466,16 +502,15 @@ public class Overlay : IDisposable
             frameVertices.Clear();
 
             long visCheckMs = -1;
-            bool visMeasured = false;
             int nowTick = Environment.TickCount;
 
-            // 1) Prépare les boîtes et décide qui a besoin d'un vischeck (cache TTL)
-            var boxes = new List<(Entity ent, float nx1, float ny1, float nx2, float ny2, bool? cachedVisible)>(ents.Count);
-            var toCompute = new List<Entity>(32);
+            // Réutiliser les buffers
+            boxesBuf.Clear();
+            toComputeBuf.Clear();
 
-            // Seuils (au carré) pour invalider sur mouvement
-            const float entPosEpsSq = 0.01f;   // ~1 cm^2 si unités = mètres (à ajuster)
-            const float localPosEpsSq = 0.01f; // idem pour le joueur local
+            // Seuils d’invalidation
+            const float entPosEpsSq = 0.01f;
+            const float localPosEpsSq = 0.01f;
 
             foreach (Entity ent in ents)
             {
@@ -509,33 +544,29 @@ public class Overlay : IDisposable
                     float boxWidth = (maxX - minX) * 1.16f;
                     float boxX = (minX + maxX) / 2f - (boxWidth / 2f);
 
-                    // Clip simple
                     if (boxX < 0 || boxY < 0 || boxX + boxWidth > width || boxY + boxHeight > height)
                         continue;
 
-                    // NDC immédiat
                     float nx1 = (boxX / width) * 2f - 1f;
                     float ny1 = 1f - (boxY / height) * 2f;
                     float nx2 = ((boxX + boxWidth) / width) * 2f - 1f;
                     float ny2 = 1f - ((boxY + boxHeight) / height) * 2f;
 
-                    // Cache TTL 75ms + seuil mouvement (entité ET joueur local)
                     bool? cachedVisible = null;
                     VisCacheEntry cached;
                     if (visCache.TryGetValue(ent.PawnAddress, out cached)
                         && (nowTick - cached.Stamp) <= 75
                         && NumericsVector3.DistanceSquared(cached.EntPos, ent.position) <= entPosEpsSq
-                        && NumericsVector3.DistanceSquared(cached.LocalPos, local.position) <= localPosEpsSq
-                        )
+                        && NumericsVector3.DistanceSquared(cached.LocalPos, local.position) <= localPosEpsSq)
                     {
                         cachedVisible = cached.Visible;
                     }
                     else
                     {
-                        toCompute.Add(ent);
+                        toComputeBuf.Add(ent);
                     }
 
-                    boxes.Add((ent, nx1, ny1, nx2, ny2, cachedVisible));
+                    boxesBuf.Add((ent, nx1, ny1, nx2, ny2, cachedVisible));
                 }
 
                 if (Functions.AimAssistEnabled && ent.head2D.X != -99f && ent.head2D.Y != -99f &&
@@ -551,13 +582,12 @@ public class Overlay : IDisposable
                 }
             }
 
-            // 2) VisCheck parallèle pour ceux qui ne sont pas en cache
             var visResults = new ConcurrentDictionary<IntPtr, bool>();
-            if (toCompute.Count > 0)
+            if (toComputeBuf.Count > 0)
             {
                 var swv = Stopwatch.StartNew();
                 Parallel.ForEach(
-                    toCompute,
+                    toComputeBuf,
                     new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1) },
                     ent =>
                     {
@@ -566,16 +596,13 @@ public class Overlay : IDisposable
                     });
                 swv.Stop();
                 visCheckMs = swv.ElapsedMilliseconds;
-                visMeasured = true;
             }
 
-            // 3) Ajoute les vertices en utilisant les résultats (cache + parallèles)
-            for (int i = 0; i < boxes.Count; i++)
+            for (int i = 0; i < boxesBuf.Count; i++)
             {
-                var item = boxes[i];
+                var item = boxesBuf[i];
                 bool visible = item.cachedVisible ?? visResults.GetOrAdd(item.ent.PawnAddress, _ => true);
 
-                // Met à jour le cache (thread unique ici) avec entité ET local
                 visCache[item.ent.PawnAddress] = new VisCacheEntry { EntPos = item.ent.position, LocalPos = local.position, Visible = visible, Stamp = nowTick };
 
                 var drawColor = visible ? colorVisible : colorHidden;
@@ -589,7 +616,6 @@ public class Overlay : IDisposable
                 frameVertices.Add(new Vertex { Position = new SharpDXVector3(item.nx1, item.ny1, 0), Color = drawColor });
             }
 
-            // Bones (séquentiel, faible coût et inchangé)
             if (Functions.BoneESPEnabled)
             {
                 foreach (Entity ent in ents)
@@ -619,26 +645,30 @@ public class Overlay : IDisposable
                 }
             }
 
+            // Throttle du titre: 2000 ms via Stopwatch
             if (visCheckMs >= 0)
             {
-                Console.Title = VisCheck.modelReady
-                    ? $"Microsoft.COM.Surogate - Model Active: {visCheckMs}ms"
-                    : $"Microsoft.COM.Surogate - Model Loading: {visCheckMs}ms";
+                long nowMs = sClock.ElapsedMilliseconds;
+                if (nowMs - lastTitleLogMs >= 2000)
+                {
+                    Console.Title = VisCheck.modelReady
+                        ? $"Microsoft.COM.Surogate - Model Active: {visCheckMs}ms"
+                        : $"Microsoft.COM.Surogate - Model Loading: {visCheckMs}ms";
+                    lastTitleLogMs = nowMs;
+                }
             }
 
             if (Functions.AimAssistEnabled)
             {
                 float fovRadius = Functions.AimAssistFOVSize * 20f;
                 RawColorBGRA fovColor = colorSelected;
-                const int segments = 32;
-                for (int i = 0; i < segments; i++)
+
+                for (int i = 0; i < FovSegments; i++)
                 {
-                    float angle1 = (float)(i * Math.PI * 2 / segments);
-                    float angle2 = (float)((i + 1) * Math.PI * 2 / segments);
-                    float x1 = screenCenter.X + fovRadius * (float)Math.Cos(angle1);
-                    float y1 = screenCenter.Y + fovRadius * (float)Math.Sin(angle1);
-                    float x2 = screenCenter.X + fovRadius * (float)Math.Cos(angle2);
-                    float y2 = screenCenter.Y + fovRadius * (float)Math.Sin(angle2);
+                    float x1 = screenCenter.X + fovRadius * FovCos[i];
+                    float y1 = screenCenter.Y + fovRadius * FovSin[i];
+                    float x2 = screenCenter.X + fovRadius * FovCos[i + 1];
+                    float y2 = screenCenter.Y + fovRadius * FovSin[i + 1];
 
                     if (float.IsNaN(x1) || float.IsNaN(y1) || float.IsNaN(x2) || float.IsNaN(y2))
                         continue;
@@ -656,7 +686,6 @@ public class Overlay : IDisposable
             int vertexCount = frameVertices.Count;
             if (vertexCount > 0)
             {
-                // Resize si nécessaire
                 if (vertexCount > maxVertices)
                 {
                     dynamicVertexBuffer.Dispose();
@@ -673,7 +702,6 @@ public class Overlay : IDisposable
                     vertexStaging = new Vertex[maxVertices];
                 }
 
-                // Copier dans le staging réutilisable (évite ToArray chaque frame)
                 frameVertices.CopyTo(0, vertexStaging, 0, vertexCount);
 
                 var box = deviceContext.MapSubresource(dynamicVertexBuffer, 0, MapMode.WriteDiscard, SharpDX.Direct3D11.MapFlags.None);
@@ -728,9 +756,8 @@ public class Overlay : IDisposable
                     VisCheck.oldMap = VisCheck.currentMap;
                 }
             }
-            catch { /* éviter de planter le thread si le jeu charge */ }
+            catch { /* silent */ }
 
-            // Poll plus lent (diminue la charge CPU en continu)
             Thread.Sleep(250);
         }
     }

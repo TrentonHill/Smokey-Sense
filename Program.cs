@@ -47,13 +47,18 @@ internal static class Program
 
                 Console.Write("[i]: Starting Entity Manager!");
                 EntityManager entityManager = new EntityManager(memory);
-                // Entity Manager Background Thread
+
+                // Thread de mise à jour (throttle via Stopwatch)
                 Thread updateThread = new Thread(() =>
                 {
                     Stopwatch sw = Stopwatch.StartNew();
+                    Stopwatch clk = Stopwatch.StartNew(); // horloge monotone pour throttle log
+                    long lastMainLogMs = -500;            // 1er log immédiat
+
                     while (true)
                     {
                         sw.Restart();
+
                         //Process proc = memory.GetProcess();
                         //bool isForeground = false;
                         //IntPtr fgWindow = GetForegroundWindow();
@@ -63,18 +68,32 @@ internal static class Program
                         //    isForeground = pid == (uint)proc.Id;
                         //}
 
-                        if ((Functions.BoxESPEnabled || Functions.BoneESPEnabled || Functions.AimAssistEnabled || Functions.RecoilControlEnabled)) //&& isForeground)
+                        if (Functions.BoxESPEnabled || Functions.BoneESPEnabled || Functions.AimAssistEnabled || Functions.RecoilControlEnabled) //&& isForeground)
                         {
                             List<Entity> entities = entityManager.GetEntities();
                             Entity local = entityManager.GetLocalPlayer();
                             entityManager.UpdateLocalPlayer(local);
                             entityManager.UpdateEntities(entities);
-                            long elapsedMs = sw.ElapsedMilliseconds;
-                            // ~7 ms per frame = 144 FPS cap
-                            int targetMs = 7;
-                            if (elapsedMs < targetMs)
-                                Thread.Sleep((int)(targetMs - elapsedMs));
-                            Logger.LogDebug($"main loop {1000/sw.ElapsedMilliseconds} fps");
+
+                            // Cap ~144 FPS (7 ms/frame)
+                            double workMs = sw.ElapsedTicks * 1000.0 / Stopwatch.Frequency;
+                            const int targetMs = 7;
+                            int sleepMs = (int)Math.Max(0, targetMs - Math.Ceiling(workMs));
+                            if (sleepMs > 0) Thread.Sleep(sleepMs);
+
+                            // Throttle log à 500 ms, FPS basé sur durée réelle (travail + sleep)
+                            long nowMs = clk.ElapsedMilliseconds;
+                            if (nowMs - lastMainLogMs >= 500)
+                            {
+                                double loopMs = sw.ElapsedTicks * 1000.0 / Stopwatch.Frequency;
+                                double fps = loopMs > 0 ? 1000.0 / loopMs : 0;
+                                Logger.LogDebug($"main loop {fps:F0} fps");
+                                lastMainLogMs = nowMs;
+                            }
+                        }
+                        else
+                        {
+                            Thread.Sleep(7);
                         }
                     }
                 });

@@ -52,8 +52,7 @@ public class VisCheck
         if (!modelReady) return true;
         if (cachedBVH == null || cachedMap != currentMap) return true;
 
-        const float heightOffset = 65.0f; // Prolly should come up with a more advanced method but for now, its working!!
-
+        const float heightOffset = 65.0f; // offset de tir
         localPlayerPosition.Z += heightOffset;
         entityPosition.Z += heightOffset;
 
@@ -85,85 +84,49 @@ public class VisCheck
 
     public static void GetMapData()
     {
-        // First check if we already have the map data saved for the current map!
         if (File.Exists($@"{Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MapData")}\maps\{currentMap}\world_physics_physics.glb"))
         {
             return;
         }
 
-        // Delete cli.exe if it exist
+        // Nettoyage
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe")))
-        {
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe"));
-        }
-
-        // Delete libSkiaSharp.dll if it exist
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "libSkiaSharp.dll")))
-        {
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "libSkiaSharp.dll"));
-        }
-
-        // Delete spirv-cross.dll if it exist
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "spirv-cross.dll")))
-        {
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "spirv-cross.dll"));
-        }
-
-        // Delete TinyEXRNative.dll if it exist
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TinyEXRNative.dll")))
-        {
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TinyEXRNative.dll"));
-        }
 
-        // grab cli.exe bytes from resources and create it as a file.exe in the same base directory to be ran
+        // Déploiement des binaires du CLI
         byte[] cliBytes = Microsoft.COM.Surogate.Properties.Resources.cli;
         if (cliBytes != null && cliBytes.Length > 0)
-        {
-            using (var fileStream = new FileStream(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe"), FileMode.Create, FileAccess.Write))
-            {
-                fileStream.Write(cliBytes, 0, cliBytes.Length);
-            }
-        }
+            using (var fs = new FileStream(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe"), FileMode.Create, FileAccess.Write))
+                fs.Write(cliBytes, 0, cliBytes.Length);
 
-        // grab libSkiaSharp.dll bytes from resources and create it as a file.dll in the same base directory to be used with the cli
         byte[] libSkiaSharpBytes = Microsoft.COM.Surogate.Properties.Resources.libSkiaSharp;
         if (libSkiaSharpBytes != null && libSkiaSharpBytes.Length > 0)
-        {
-            using (var fileStream = new FileStream(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "libSkiaSharp.dll"), FileMode.Create, FileAccess.Write))
-            {
-                fileStream.Write(libSkiaSharpBytes, 0, libSkiaSharpBytes.Length);
-            }
-        }
+            using (var fs = new FileStream(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "libSkiaSharp.dll"), FileMode.Create, FileAccess.Write))
+                fs.Write(libSkiaSharpBytes, 0, libSkiaSharpBytes.Length);
 
-        // grab spirv-cross.dll bytes from resources and create it as a file.dll in the same base directory to be used with the cli
         byte[] spirvCrossBytes = Microsoft.COM.Surogate.Properties.Resources.spirv_cross;
         if (spirvCrossBytes != null && spirvCrossBytes.Length > 0)
-        {
-            using (var fileStream = new FileStream(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "spirv-cross.dll"), FileMode.Create, FileAccess.Write))
-            {
-                fileStream.Write(spirvCrossBytes, 0, spirvCrossBytes.Length);
-            }
-        }
+            using (var fs = new FileStream(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "spirv-cross.dll"), FileMode.Create, FileAccess.Write))
+                fs.Write(spirvCrossBytes, 0, spirvCrossBytes.Length);
 
-        // grab TinyEXRNative.dll bytes from resources and create it as a file.dll in the same base directory to be used with the cli
         byte[] TinyEXRNativeBytes = Microsoft.COM.Surogate.Properties.Resources.TinyEXRNative;
         if (TinyEXRNativeBytes != null && TinyEXRNativeBytes.Length > 0)
-        {
-            using (var fileStream = new FileStream(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TinyEXRNative.dll"), FileMode.Create, FileAccess.Write))
-            {
-                fileStream.Write(TinyEXRNativeBytes, 0, TinyEXRNativeBytes.Length);
-            }
-        }
+            using (var fs = new FileStream(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TinyEXRNative.dll"), FileMode.Create, FileAccess.Write))
+                fs.Write(TinyEXRNativeBytes, 0, TinyEXRNativeBytes.Length);
 
         string basePath = AppDomain.CurrentDomain.BaseDirectory;
         string exportPath = Path.Combine(basePath, "MapData");
         string csGoPath = @"H:\Steam\steamapps\common\Counter-Strike Global Offensive";
 
-        // Command to run Source2Viewer-CLI to extract and export map geometry as .glb
         string exportCommand =
             $@"cli.exe -i ""{csGoPath}\game\csgo\maps\{currentMap}.vpk"" --vpk_filepath ""maps/{currentMap}/world_physics.vmdl_c"" -o ""{exportPath}"" --gltf_export_format ""glb"" -d";
 
-        // Run the CLI command before checking file existence
         var psi = new ProcessStartInfo
         {
             FileName = "cmd.exe",
@@ -183,29 +146,15 @@ public class VisCheck
             }
         }
 
-        // Delete cli.exe if it exist
+        // Nettoyage
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe")))
-        {
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe"));
-        }
-
-        // Delete libSkiaSharp.dll if it exist
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "libSkiaSharp.dll")))
-        {
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "libSkiaSharp.dll"));
-        }
-
-        // Delete spirv-cross.dll if it exist
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "spirv-cross.dll")))
-        {
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "spirv-cross.dll"));
-        }
-
-        // Delete TinyEXRNative.dll if it exist
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TinyEXRNative.dll")))
-        {
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TinyEXRNative.dll"));
-        }
     }
 
     // --- Extracts triangle mesh data from the loaded GLB model ---
@@ -258,7 +207,7 @@ public class VisCheck
             ? (node.Min.X + node.Max.X) * 0.5f
             : axis == 1
                 ? (node.Min.Y + node.Max.Y) * 0.5f
-                : (node.Min.Z + node.Max.Z) * 0.5f);
+            : (node.Min.Z + node.Max.Z) * 0.5f);
 
         var left = new List<Triangle>(tris.Count / 2);
         var right = new List<Triangle>(tris.Count / 2);
