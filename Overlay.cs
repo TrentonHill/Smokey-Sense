@@ -1,5 +1,6 @@
 ﻿using Microsoft.COM.Surogate;
 using Microsoft.COM.Surogate.Data;
+using Microsoft.COM.Surogate.Modules;
 using SharpDX;
 using SharpDX.D3DCompiler;
 using SharpDX.Direct3D;
@@ -380,15 +381,17 @@ public class Overlay : IDisposable
 
     private void RenderLoop()
     {
+            Stopwatch sw = Stopwatch.StartNew();
         while (running)
         {
-            Stopwatch sw = Stopwatch.StartNew();
+            sw.Restart();
             RenderFrame();
             long elapsedMs = sw.ElapsedTicks * 1000 / Stopwatch.Frequency;
             // ~7 ms per frame = 144 FPS cap
             int targetMs = 7;
             if (elapsedMs < targetMs)
                 Thread.Sleep((int)(targetMs - elapsedMs));
+            Logger.LogDebug($"render loop {1000/sw.ElapsedMilliseconds} fps");
         }
     }
 

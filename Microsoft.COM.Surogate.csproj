@@ -115,6 +115,7 @@
     <Compile Include="Data\EntityManager.cs" />
     <Compile Include="Data\Memory.cs" />
     <Compile Include="Data\VisCheck.cs" />
+    <Compile Include="Modules\Logger.cs" />
     <Compile Include="Modules\Offsets.cs" />
     <Compile Include="Modules\Functions.cs" />
     <Compile Include="Overlay.cs">

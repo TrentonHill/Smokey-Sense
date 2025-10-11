@@ -1,11 +1,13 @@
 ﻿using Microsoft.COM.Surogate;
 using Microsoft.COM.Surogate.Data;
+using Microsoft.COM.Surogate.Modules;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using static Microsoft.COM.Surogate.Modules.Logger;
 
 internal static class Program
 {
@@ -48,8 +50,10 @@ internal static class Program
                 // Entity Manager Background Thread
                 Thread updateThread = new Thread(() =>
                 {
+                    Stopwatch sw = Stopwatch.StartNew();
                     while (true)
                     {
+                        sw.Restart();
                         //Process proc = memory.GetProcess();
                         //bool isForeground = false;
                         //IntPtr fgWindow = GetForegroundWindow();
@@ -58,18 +62,19 @@ internal static class Program
                         //    GetWindowThreadProcessId(fgWindow, out uint pid);
                         //    isForeground = pid == (uint)proc.Id;
                         //}
-                        Stopwatch sw = Stopwatch.StartNew();
+
                         if ((Functions.BoxESPEnabled || Functions.BoneESPEnabled || Functions.AimAssistEnabled || Functions.RecoilControlEnabled)) //&& isForeground)
                         {
                             List<Entity> entities = entityManager.GetEntities();
                             Entity local = entityManager.GetLocalPlayer();
                             entityManager.UpdateLocalPlayer(local);
                             entityManager.UpdateEntities(entities);
-                            long elapsedMs = sw.ElapsedTicks * 1000 / Stopwatch.Frequency;
+                            long elapsedMs = sw.ElapsedMilliseconds;
                             // ~7 ms per frame = 144 FPS cap
                             int targetMs = 7;
                             if (elapsedMs < targetMs)
                                 Thread.Sleep((int)(targetMs - elapsedMs));
+                            Logger.LogDebug($"main loop {1000/sw.ElapsedMilliseconds} fps");
                         }
                     }
                 });
@@ -86,7 +91,7 @@ internal static class Program
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ERROR]: {ex.Message}");
+                Logger.LogError($"[ERROR]: {ex.Message}");
                 Thread.Sleep(5000);
                 Environment.Exit(1);
             }
