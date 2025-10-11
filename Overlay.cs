@@ -48,6 +48,21 @@ public class Overlay : IDisposable
     private BlendState blendState;
     private static Vector3 OldPunch = Vector3.Zero;
 
+    // === Ajouts: VB dynamique persistant + staging + cache visibilité ===
+    private Buffer dynamicVertexBuffer;
+    private int maxVertices = 65536; // capacité initiale (augmentée à la volée si nécessaire)
+    private Vertex[] vertexStaging;
+    private readonly List<Vertex> frameVertices = new List<Vertex>(4096);
+    private struct VisCacheEntry { public NumericsVector3 Pos; public bool Visible; public int Stamp; }
+    private readonly Dictionary<IntPtr, VisCacheEntry> visCache = new Dictionary<IntPtr, VisCacheEntry>(128);
+
+    // Connections d’os statiques (évite l’allocation par frame)
+    private static readonly (int, int)[] BoneConnections = new (int, int)[17]
+    {
+        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (4, 6), (6, 7), (7, 8), (8, 9),
+        (4, 10), (10, 11), (11, 12), (12, 13), (0, 14), (14, 15), (0, 16), (16, 17)
+    };
+
     private const int WS_EX_LAYERED = 0x80000;
     private const int WS_EX_TRANSPARENT = 0x20;
     private const int WS_EX_TOPMOST = 0x8;
@@ -320,6 +335,18 @@ public class Overlay : IDisposable
             pixelShader = new PixelShader(d3dDevice, psBytecode);
         }
 
+        // === Init VB dynamique persistant ===
+        var vbDesc = new BufferDescription
+        {
+            Usage = ResourceUsage.Dynamic,
+            BindFlags = BindFlags.VertexBuffer,
+            CpuAccessFlags = CpuAccessFlags.Write,
+            OptionFlags = ResourceOptionFlags.None,
+            SizeInBytes = Utilities.SizeOf<Vertex>() * maxVertices
+        };
+        dynamicVertexBuffer = new Buffer(d3dDevice, vbDesc);
+        vertexStaging = new Vertex[maxVertices];
+
         Thread renderThread = new Thread(RenderLoop)
         {
             IsBackground = true,
@@ -362,19 +389,19 @@ public class Overlay : IDisposable
             string input = Console.ReadLine();
             if (input == "1")
             {
-                if (Functions.BoxESPEnabled) { Functions.BoxESPEnabled = false; } else { Functions.BoxESPEnabled = true; }
+                Functions.BoxESPEnabled = !Functions.BoxESPEnabled;
             }
             if (input == "2")
             {
-                if (Functions.BoneESPEnabled) { Functions.BoneESPEnabled = false; } else { Functions.BoneESPEnabled = true; }
+                Functions.BoneESPEnabled = !Functions.BoneESPEnabled;
             }
             if (input == "3")
             {
-                if (Functions.AimAssistEnabled) { Functions.AimAssistEnabled = false; } else { Functions.AimAssistEnabled = true; }
+                Functions.AimAssistEnabled = !Functions.AimAssistEnabled;
             }
             if (input == "4")
             {
-                if (Functions.RecoilControlEnabled) { Functions.RecoilControlEnabled = false; } else { Functions.RecoilControlEnabled = true; }
+                Functions.RecoilControlEnabled = !Functions.RecoilControlEnabled;
             }
         }
     }
@@ -387,11 +414,10 @@ public class Overlay : IDisposable
             sw.Restart();
             RenderFrame();
             long elapsedMs = sw.ElapsedTicks * 1000 / Stopwatch.Frequency;
-            // ~7 ms per frame = 144 FPS cap
-            int targetMs = 7;
+            int targetMs = 7; // ~144 FPS
             if (elapsedMs < targetMs)
                 Thread.Sleep((int)(targetMs - elapsedMs));
-            Logger.LogDebug($"render loop {1000/sw.ElapsedMilliseconds} fps");
+            Logger.LogDebug($"Render loop {1000 / sw.ElapsedMilliseconds} fps");
         }
     }
 
@@ -417,21 +443,6 @@ public class Overlay : IDisposable
             deviceContext.PixelShader.Set(pixelShader);
             deviceContext.InputAssembler.PrimitiveTopology = SharpDX.Direct3D.PrimitiveTopology.LineList;
 
-            //Process proc = memory.GetProcess();
-            //bool isForeground = false;
-            //IntPtr fgWindow = GetForegroundWindow();
-            //if (fgWindow != IntPtr.Zero)
-            //{
-            //    GetWindowThreadProcessId(fgWindow, out uint pid);
-            //    isForeground = pid == (uint)proc.Id;
-            //}
-
-            //if (!isForeground)
-            //{
-            //    swapChain.Present(0, PresentFlags.None);
-            //    return;
-            //}
-
             Entity local = entityManager.LocalPlayer;
             List<Entity> ents = entityManager.Entities;
             if (local.PawnAddress == IntPtr.Zero)
@@ -444,117 +455,102 @@ public class Overlay : IDisposable
             Entity closestTarget = null;
             float minDist = float.MaxValue;
 
-            int[] rgba = Functions.SelectedColorRGBA;
-            RawColorBGRA matchColor = new RawColorBGRA((byte)rgba[0], (byte)rgba[1], (byte)rgba[2], (byte)rgba[3]);
+            // Couleurs locales, éviter de muter Functions.SelectedColorRGBA dans la boucle
+            RawColorBGRA colorSelected = new RawColorBGRA((byte)Functions.SelectedColorRGBA[0], (byte)Functions.SelectedColorRGBA[1], (byte)Functions.SelectedColorRGBA[2], (byte)Functions.SelectedColorRGBA[3]);
+            RawColorBGRA colorVisible = new RawColorBGRA(0, 255, 0, 255);
+            RawColorBGRA colorHidden = new RawColorBGRA(0, 0, 0, 255);
 
-            List<Vertex> vertices = new List<Vertex>();
+            frameVertices.Clear();
+
+            long visCheckMs = -1;
+            bool visMeasured = false;
+            int nowTick = Environment.TickCount;
 
             foreach (Entity ent in ents)
             {
                 if (ent.PawnAddress == IntPtr.Zero || ent.health <= 0 || ent.team == local.team) continue;
 
-                if (Functions.BoxESPEnabled && ent.bones2D != null && ent.bones2D.Count > 0) // Perfect, dont touch!
+                if (Functions.BoxESPEnabled && ent.bones2D != null && ent.bones2D.Count > 0)
                 {
-                    // Calculate raw min/max
                     float headY = ent.head2D.Y;
-                    float minX = float.MaxValue;
-                    float maxX = float.MinValue;
-                    float minY = float.MaxValue;
-                    float maxY = float.MinValue;
+                    float minX = float.MaxValue, maxX = float.MinValue, minY = float.MaxValue, maxY = float.MinValue;
 
-                    foreach (var bone in ent.bones2D)
+                    for (int i = 0; i < ent.bones2D.Count; i++)
                     {
-                        if (float.IsNaN(bone.X) || float.IsNaN(bone.Y) || bone.X == -99f || bone.Y == -99f)
-                            continue;
-
+                        var bone = ent.bones2D[i];
+                        if (float.IsNaN(bone.X) || float.IsNaN(bone.Y) || bone.X == -99f || bone.Y == -99f) continue;
                         if (bone.X < minX) minX = bone.X;
                         if (bone.X > maxX) maxX = bone.X;
                         if (bone.Y < minY) minY = bone.Y;
                         if (bone.Y > maxY) maxY = bone.Y;
                     }
 
-                    if (minX == float.MaxValue || maxX == float.MinValue ||
-                        minY == float.MaxValue || maxY == float.MinValue)
-                        continue;
+                    if (minX == float.MaxValue || maxX == float.MinValue || minY == float.MaxValue || maxY == float.MinValue) continue;
 
-                    // Raw box from head to feet
                     float rawHeight = maxY - headY;
                     if (rawHeight < 10f) continue;
 
-                    // Add a little padding
-                    float paddingTop = rawHeight * 0.12f;   // 12% above head pos
-                    float paddingBottom = rawHeight * 0.09f; // 9% below feet pos
+                    float paddingTop = rawHeight * 0.12f;
+                    float paddingBottom = rawHeight * 0.09f;
 
                     float boxY = headY - paddingTop;
                     float boxHeight = rawHeight + paddingTop + paddingBottom;
-
-                    float boxWidth = (maxX - minX) * 1.16f; // widen box slightly (16%)
+                    float boxWidth = (maxX - minX) * 1.16f;
                     float boxX = (minX + maxX) / 2f - (boxWidth / 2f);
 
-                    // Clip check
+                    // Clip simple
                     if (boxX < 0 || boxY < 0 || boxX + boxWidth > width || boxY + boxHeight > height)
                         continue;
 
-                    // Convert to NDC
+                    // Visibilité (avec cache TTL 75ms + seuil de mouvement)
+                    bool visible;
+                    VisCacheEntry cached;
+                    if (visCache.TryGetValue(ent.PawnAddress, out cached)
+                        && (nowTick - cached.Stamp) <= 75
+                        && NumericsVector3.DistanceSquared(cached.Pos, ent.position) <= 0.01f)
+                    {
+                        visible = cached.Visible;
+                    }
+                    else
+                    {
+                        if (!visMeasured)
+                        {
+                            var swv = Stopwatch.StartNew();
+                            visible = VisCheck.IsVisible(local.position, ent.position);
+                            swv.Stop();
+                            visCheckMs = swv.ElapsedMilliseconds;
+                            visMeasured = true;
+                        }
+                        else
+                        {
+                            visible = VisCheck.IsVisible(local.position, ent.position);
+                        }
+                        visCache[ent.PawnAddress] = new VisCacheEntry { Pos = ent.position, Visible = visible, Stamp = nowTick };
+                    }
+
+                    // NDC
                     float nx1 = (boxX / width) * 2f - 1f;
                     float ny1 = 1f - (boxY / height) * 2f;
                     float nx2 = ((boxX + boxWidth) / width) * 2f - 1f;
                     float ny2 = 1f - ((boxY + boxHeight) / height) * 2f;
 
-                    Stopwatch sw = Stopwatch.StartNew();
-                    bool visible = VisCheck.IsVisible(local.position, ent.position);
-                    sw.Stop();
-                    if (VisCheck.modelReady) { Console.Title = $"Microsoft.COM.Surogate - Model Active: {sw.ElapsedMilliseconds}ms"; } else { Console.Title = $"Microsoft.COM.Surogate - Model Loading: {sw.ElapsedMilliseconds}ms"; }
-                    if (visible)
-                    {
-                        Functions.SelectedColorRGBA = new int[4] { 0, 255, 0, 255 };
-                        rgba = Functions.SelectedColorRGBA;
-                        matchColor = new RawColorBGRA((byte)rgba[0], (byte)rgba[1], (byte)rgba[2], (byte)rgba[3]);
-                        vertices.AddRange(new[]
-                        {
-                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor }
-                        });
-                    }
-                    else
-                    {
-                        Functions.SelectedColorRGBA = new int[4] { 0, 0, 0, 255 };
-                        rgba = Functions.SelectedColorRGBA;
-                        matchColor = new RawColorBGRA((byte)rgba[0], (byte)rgba[1], (byte)rgba[2], (byte)rgba[3]);
-                        vertices.AddRange(new[]
-                        {
-                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor }
-                        });
-                    }
+                    var drawColor = visible ? colorVisible : colorHidden;
+                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = drawColor });
+                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = drawColor });
+                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = drawColor });
+                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = drawColor });
+                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = drawColor });
+                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = drawColor });
+                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = drawColor });
+                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = drawColor });
                 }
 
-                if (Functions.BoneESPEnabled && ent.bones2D != null && ent.bones2D.Count > 0) // Not Perfect yet, still has a weird zig zag in the back area!
+                if (Functions.BoneESPEnabled && ent.bones2D != null && ent.bones2D.Count > 0)
                 {
-                    (int, int)[] boneConnections = new (int, int)[17]
+                    for (int i = 0; i < BoneConnections.Length; i++)
                     {
-                        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (4, 6), (6, 7), (7, 8), (8, 9),
-                        (4, 10), (10, 11), (11, 12), (12, 13), (0, 14), (14, 15), (0, 16), (16, 17)
-                    };
-                    for (int i = 0; i < boneConnections.Length; i++)
-                    {
-                        var (b1, b2) = boneConnections[i];
-                        if (b1 >= ent.bones2D.Count || b2 >= ent.bones2D.Count)
-                        {
-                            continue;
-                        }
+                        var (b1, b2) = BoneConnections[i];
+                        if (b1 >= ent.bones2D.Count || b2 >= ent.bones2D.Count) continue;
                         NumericsVector2 p1 = ent.bones2D[b1];
                         NumericsVector2 p2 = ent.bones2D[b2];
                         if (p1.X == -99f || p1.Y == -99f || p2.X == -99f || p2.Y == -99f ||
@@ -567,11 +563,8 @@ public class Overlay : IDisposable
                         float nx2 = (p2.X / width) * 2f - 1f;
                         float ny2 = 1f - (p2.Y / height) * 2f;
 
-                        vertices.AddRange(new[]
-                        {
-                            new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = matchColor },
-                            new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = matchColor }
-                        });
+                        frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = colorSelected });
+                        frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = colorSelected });
                     }
                 }
 
@@ -588,11 +581,17 @@ public class Overlay : IDisposable
                 }
             }
 
-            if (Functions.AimAssistEnabled) // (AimAssist FOV Circle): Works Perfectly, dont touch! (Long term only show if toggle key is also pressed)
+            if (visCheckMs >= 0)
+            {
+                Console.Title = VisCheck.modelReady
+                    ? $"Microsoft.COM.Surogate - Model Active: {visCheckMs}ms"
+                    : $"Microsoft.COM.Surogate - Model Loading: {visCheckMs}ms";
+            }
+
+            if (Functions.AimAssistEnabled)
             {
                 float fovRadius = Functions.AimAssistFOVSize * 20f;
-                RawColorBGRA fovColor = matchColor; // Match selected color
-
+                RawColorBGRA fovColor = colorSelected;
                 const int segments = 32;
                 for (int i = 0; i < segments; i++)
                 {
@@ -604,90 +603,47 @@ public class Overlay : IDisposable
                     float y2 = screenCenter.Y + fovRadius * (float)Math.Sin(angle2);
 
                     if (float.IsNaN(x1) || float.IsNaN(y1) || float.IsNaN(x2) || float.IsNaN(y2))
-                    {
                         continue;
-                    }
 
                     float nx1 = (x1 / width) * 2f - 1f;
                     float ny1 = 1f - (y1 / height) * 2f;
                     float nx2 = (x2 / width) * 2f - 1f;
                     float ny2 = 1f - (y2 / height) * 2f;
 
-                    vertices.AddRange(new[]
-                    {
-                        new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = fovColor },
-                        new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = fovColor }
-                    });
+                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = fovColor });
+                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = fovColor });
                 }
             }
 
-            if (vertices.Count > 0)
+            int vertexCount = frameVertices.Count;
+            if (vertexCount > 0)
             {
-                using (var vb = Buffer.Create(d3dDevice, BindFlags.VertexBuffer, vertices.ToArray()))
+                // Resize si nécessaire
+                if (vertexCount > maxVertices)
                 {
-                    deviceContext.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(vb, Utilities.SizeOf<Vertex>(), 0));
-                    deviceContext.Draw(vertices.Count, 0);
+                    dynamicVertexBuffer.Dispose();
+                    maxVertices = NextPow2(vertexCount);
+                    var vbDescGrow = new BufferDescription
+                    {
+                        Usage = ResourceUsage.Dynamic,
+                        BindFlags = BindFlags.VertexBuffer,
+                        CpuAccessFlags = CpuAccessFlags.Write,
+                        OptionFlags = ResourceOptionFlags.None,
+                        SizeInBytes = Utilities.SizeOf<Vertex>() * maxVertices
+                    };
+                    dynamicVertexBuffer = new Buffer(d3dDevice, vbDescGrow);
+                    vertexStaging = new Vertex[maxVertices];
                 }
-            }
 
-            if (Functions.AimAssistEnabled) 
-            {
+                // Copier dans le staging réutilisable (évite ToArray chaque frame)
+                frameVertices.CopyTo(0, vertexStaging, 0, vertexCount);
 
-            }
+                var box = deviceContext.MapSubresource(dynamicVertexBuffer, 0, MapMode.WriteDiscard, SharpDX.Direct3D11.MapFlags.None);
+                Utilities.Write(box.DataPointer, vertexStaging, 0, vertexCount);
+                deviceContext.UnmapSubresource(dynamicVertexBuffer, 0);
 
-            if (Functions.RecoilControlEnabled) 
-            {
-                //float Strength = 100f; // percent (1 == 100%, 0.5 == 50%)
-                //float Smoothing = 5f;
-
-                //// read punch angle
-                //Vector3 rawPunch = memory.ReadVec(local.PawnAddress + Offsets.m_aimPunchAngle);
-                //Console.WriteLine($"[RCS DEBUG] Raw m_aimPunchAngle: {rawPunch}");
-                //Vector3 punch = rawPunch * Strength / 100f * 2f;
-
-                //int shotsFired = memory.ReadInt(local.PawnAddress, Offsets.shotsFired);
-                //Console.WriteLine($"[RCS DEBUG] ShotsFired: {shotsFired}");
-
-                //if (shotsFired > 1)
-                //{
-                //    Vector3 currentAngles = memory.ReadVec(memory.GetModuleBase(), Offsets.dwViewAngles);
-
-                //    // delta between previous punch and current punch
-                //    Vector3 deltaPunch = punch - OldPunch;
-
-                //    // calculate new angles
-                //    Vector3 newAngles = currentAngles - deltaPunch;
-                //    newAngles.X = Normalize(newAngles.X);
-                //    newAngles.Y = Normalize(newAngles.Y);
-
-                //    // compute float dx/dy before rounding
-                //    float dxFloat = (newAngles.X - currentAngles.X); // no / Smoothing
-                //    float dyFloat = (newAngles.Y - currentAngles.Y);
-
-                //    int dx = (int)(dxFloat * 50f); // scale up for testing
-                //    int dy = (int)(dyFloat * 50f);
-
-                //    // debug logging
-                //    Console.WriteLine($"[RCS DEBUG] CurrentAngles: {currentAngles}");
-                //    Console.WriteLine($"[RCS DEBUG] Punch: {punch}, OldPunch: {OldPunch}, DeltaPunch: {deltaPunch}");
-                //    Console.WriteLine($"[RCS DEBUG] NewAngles (after normalize): {newAngles}");
-                //    Console.WriteLine($"[RCS DEBUG] dxFloat: {dxFloat:F4}, dyFloat: {dyFloat:F4}, dx: {dx}, dy: {dy}");
-
-                //    // apply mouse move if non-zero
-                //    if (dx != 0 || dy != 0)
-                //    {
-                //        MoveMouse(dx, dy);
-                //        Console.WriteLine("[RCS DEBUG] MoveMouse called");
-                //    }
-                //    else
-                //    {
-                //        Console.WriteLine("[RCS DEBUG] dx/dy == 0 (no movement this tick)");
-                //    }
-                //}
-
-                //// store last punch for next frame
-                //OldPunch = punch;
-                //Console.WriteLine($"[RCS DEBUG] OldPunch updated: {OldPunch}");
+                deviceContext.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(dynamicVertexBuffer, Utilities.SizeOf<Vertex>(), 0));
+                deviceContext.Draw(vertexCount, 0);
             }
 
             swapChain.Present(0, PresentFlags.None);
@@ -700,34 +656,44 @@ public class Overlay : IDisposable
         }
     }
 
+    private static int NextPow2(int v)
+    {
+        v--;
+        v |= v >> 1;
+        v |= v >> 2;
+        v |= v >> 4;
+        v |= v >> 8;
+        v |= v >> 16;
+        v++;
+        return v;
+    }
+
     private void BackgroundMapHandler()
     {
         while (true)
         {
-            Stopwatch sw = Stopwatch.StartNew();
-
-            IntPtr globalVars = memory.ReadPointer(memory.GetModuleBase() + Offsets.dwGlobalVars);
-            IntPtr currentMapNamePtr = memory.ReadPointer(globalVars + 0x180);
-            VisCheck.currentMap = memory.ReadString(currentMapNamePtr);
-
-            if (string.IsNullOrEmpty(VisCheck.currentMap) || VisCheck.currentMap == "<empty>")
+            try
             {
-                VisCheck.oldMap = VisCheck.currentMap;
-                VisCheck.modelReady = false;
-                continue;
-            }
+                IntPtr globalVars = memory.ReadPointer(memory.GetModuleBase() + Offsets.dwGlobalVars);
+                IntPtr currentMapNamePtr = memory.ReadPointer(globalVars + 0x180);
+                VisCheck.currentMap = memory.ReadString(currentMapNamePtr);
 
-            if (VisCheck.currentMap != VisCheck.oldMap)
-            {
-                VisCheck.GetMapData();
-                VisCheck.LoadBVHForMap();
-                VisCheck.oldMap = VisCheck.currentMap;
+                if (string.IsNullOrEmpty(VisCheck.currentMap) || VisCheck.currentMap == "<empty>")
+                {
+                    VisCheck.oldMap = VisCheck.currentMap;
+                    VisCheck.modelReady = false;
+                }
+                else if (VisCheck.currentMap != VisCheck.oldMap)
+                {
+                    VisCheck.GetMapData();
+                    VisCheck.LoadBVHForMap();
+                    VisCheck.oldMap = VisCheck.currentMap;
+                }
             }
-            long elapsedMs = sw.ElapsedTicks * 1000 / Stopwatch.Frequency;
-            // ~7 ms per frame = 144 FPS cap
-            int targetMs = 7;
-            if (elapsedMs < targetMs)
-                Thread.Sleep((int)(targetMs - elapsedMs));
+            catch { /* éviter de planter le thread si le jeu charge */ }
+
+            // Poll plus lent (diminue la charge CPU en continu)
+            Thread.Sleep(250);
         }
     }
 
@@ -767,6 +733,11 @@ public class Overlay : IDisposable
         {
             vertexBuffer.Dispose();
             vertexBuffer = null;
+        }
+        if (dynamicVertexBuffer != null)
+        {
+            dynamicVertexBuffer.Dispose();
+            dynamicVertexBuffer = null;
         }
         if (inputLayout != null)
         {
