@@ -50,35 +50,35 @@ public class Overlay : IDisposable
     private BlendState blendState;
     private static Vector3 OldPunch = Vector3.Zero;
 
-    // VB dynamique + staging
+    // Dynamic VB + staging
     private Buffer dynamicVertexBuffer;
     private int maxVertices = 65536;
     private Vertex[] vertexStaging;
     private readonly List<Vertex> frameVertices = new List<Vertex>(4096);
 
-    // Cache visibilité (entité + joueur local)
+    // Visibility cache (entity + local player)
     private struct VisCacheEntry { public NumericsVector3 EntPos; public NumericsVector3 LocalPos; public bool Visible; public int Stamp; }
     private readonly Dictionary<IntPtr, VisCacheEntry> visCache = new Dictionary<IntPtr, VisCacheEntry>(128);
 
-    // Buffers réutilisés pour éviter les allocs par frame
+    // Reused buffers to avoid per-frame allocations
     private readonly List<(Entity ent, float nx1, float ny1, float nx2, float ny2, bool? cachedVisible)> boxesBuf = new List<(Entity, float, float, float, float, bool?)>(64);
     private readonly List<Entity> toComputeBuf = new List<Entity>(32);
 
-    // Connections d’os statiques
+    // Static bone connections
     private static readonly (int, int)[] BoneConnections = new (int, int)[17]
     {
         (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (4, 6), (6, 7), (7, 8), (8, 9),
         (4, 10), (10, 11), (11, 12), (12, 13), (0, 14), (14, 15), (0, 16), (16, 17)
     };
 
-    // Cache taille fenêtre + throttle logs/titre via Stopwatch
+    // Cached window size + throttled logs/title via Stopwatch
     private float cachedWidth, cachedHeight;
     private int lastWndSizeTick;
     private static readonly Stopwatch sClock = Stopwatch.StartNew();
-    private long lastRenderLogMs = -500; // 1er log immédiat
-    private long lastTitleLogMs = -2000; // 1er titre immédiat
+    private long lastRenderLogMs = -500; // first log immediately
+    private long lastTitleLogMs = -2000; // first title immediately
 
-    // FOV pré-calcul (cos/sin)
+    // Precomputed FOV (cos/sin)
     private const int FovSegments = 32;
     private static readonly float[] FovCos = new float[FovSegments + 1];
     private static readonly float[] FovSin = new float[FovSegments + 1];
@@ -365,7 +365,7 @@ public class Overlay : IDisposable
             pixelShader = new PixelShader(d3dDevice, psBytecode);
         }
 
-        // VB dynamique persistant
+        // Persistent dynamic VB
         var vbDesc = new BufferDescription
         {
             Usage = ResourceUsage.Dynamic,
@@ -377,7 +377,7 @@ public class Overlay : IDisposable
         dynamicVertexBuffer = new Buffer(d3dDevice, vbDesc);
         vertexStaging = new Vertex[maxVertices];
 
-        // Taille fenêtre initiale
+        // Initial window size
         cachedWidth = clientRect.Right - clientRect.Left;
         cachedHeight = clientRect.Bottom - clientRect.Top;
         lastWndSizeTick = Environment.TickCount;
@@ -440,7 +440,7 @@ public class Overlay : IDisposable
             int targetMs = 7; // ~144 FPS
             if (elapsedMs < targetMs) Thread.Sleep((int)(targetMs - elapsedMs));
 
-            // throttle console: 500 ms via Stopwatch
+            // Throttle console logging: every 500 ms via Stopwatch
             long nowMs = sClock.ElapsedMilliseconds;
             if (nowMs - lastRenderLogMs >= 500)
             {
@@ -458,7 +458,7 @@ public class Overlay : IDisposable
 
         try
         {
-            // MàJ taille fenêtre toutes les 250 ms (TickCount OK ici)
+            // Update window size every 250 ms (TickCount is fine here)
             int nowTickLocal = Environment.TickCount;
             if (nowTickLocal - lastWndSizeTick >= 250)
             {
@@ -504,11 +504,11 @@ public class Overlay : IDisposable
             long visCheckMs = -1;
             int nowTick = Environment.TickCount;
 
-            // Réutiliser les buffers
+            // Reuse buffers
             boxesBuf.Clear();
             toComputeBuf.Clear();
 
-            // Seuils d’invalidation
+            // Invalidation thresholds
             const float entPosEpsSq = 0.01f;
             const float localPosEpsSq = 0.01f;
 
@@ -645,7 +645,7 @@ public class Overlay : IDisposable
                 }
             }
 
-            // Throttle du titre: 2000 ms via Stopwatch
+            // Throttle window title update: every 2000 ms via Stopwatch
             if (visCheckMs >= 0)
             {
                 long nowMs = sClock.ElapsedMilliseconds;

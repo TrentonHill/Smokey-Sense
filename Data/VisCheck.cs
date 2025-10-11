@@ -27,7 +27,7 @@ public class VisCheck
     public struct Triangle
     {
         public Vector3 A, B, C;
-        // Edges pré-calculés (accélère l’intersection)
+        // Precomputed edges (accelerates intersection)
         public Vector3 E1, E2;
 
         public Triangle(Vector3 a, Vector3 b, Vector3 c)
@@ -52,7 +52,7 @@ public class VisCheck
         if (!modelReady) return true;
         if (cachedBVH == null || cachedMap != currentMap) return true;
 
-        const float heightOffset = 65.0f; // offset de tir
+        const float heightOffset = 65.0f; // aim height offset
         localPlayerPosition.Z += heightOffset;
         entityPosition.Z += heightOffset;
 
@@ -89,7 +89,7 @@ public class VisCheck
             return;
         }
 
-        // Nettoyage
+        // Cleanup
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe")))
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe"));
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "libSkiaSharp.dll")))
@@ -99,7 +99,7 @@ public class VisCheck
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TinyEXRNative.dll")))
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TinyEXRNative.dll"));
 
-        // Déploiement des binaires du CLI
+        // Deploy CLI binaries
         byte[] cliBytes = Microsoft.COM.Surogate.Properties.Resources.cli;
         if (cliBytes != null && cliBytes.Length > 0)
             using (var fs = new FileStream(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe"), FileMode.Create, FileAccess.Write))
@@ -122,7 +122,7 @@ public class VisCheck
 
         string basePath = AppDomain.CurrentDomain.BaseDirectory;
         string exportPath = Path.Combine(basePath, "MapData");
-        string csGoPath = @"H:\Steam\steamapps\common\Counter-Strike Global Offensive";
+        string csGoPath = @"H:\\Steam\\steamapps\\common\\Counter-Strike Global Offensive";
 
         string exportCommand =
             $@"cli.exe -i ""{csGoPath}\game\csgo\maps\{currentMap}.vpk"" --vpk_filepath ""maps/{currentMap}/world_physics.vmdl_c"" -o ""{exportPath}"" --gltf_export_format ""glb"" -d";
@@ -146,7 +146,7 @@ public class VisCheck
             }
         }
 
-        // Nettoyage
+        // Cleanup
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe")))
             System.IO.File.Delete(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli.exe"));
         if (System.IO.File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "libSkiaSharp.dll")))
@@ -242,7 +242,7 @@ public class VisCheck
     // --- Compute the min/max bounds of a triangle list ---
     static void ComputeBounds(List<Triangle> tris, out Vector3 min, out Vector3 max)
     {
-        if (tris == null || tris.Count == 0)
+        if (tris == null |tris.Count == 0)
         {
             min = max = Vector3.Zero;
             return;
@@ -268,7 +268,7 @@ public class VisCheck
         if (p.X > max.X) max.X = p.X; if (p.Y > max.Y) max.Y = p.Y; if (p.Z > max.Z) max.Z = p.Z;
     }
 
-    // --- Ray vs Bounding Box intersection test (original, conservée) ---
+    // --- Ray vs Bounding Box intersection test (original, kept) ---
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static bool RayIntersectsAABB(Vector3 origin, Vector3 dir, Vector3 min, Vector3 max, float maxDist)
     {
@@ -327,7 +327,7 @@ public class VisCheck
         return tmax > tmin && tmax >= 0f;
     }
 
-    // Variante optimisée (slabs + invDir + tNear)
+    // Optimized variant (slabs + invDir + tNear)
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static bool RayIntersectsAABBInv(Vector3 origin, Vector3 dir, Vector3 invDir, Vector3 min, Vector3 max, float maxDist, out float tNear)
     {
@@ -384,24 +384,24 @@ public class VisCheck
         return tmax > tmin && tmax >= 0f;
     }
 
-    // Traversée BVH optimisée (itérative, near-first). Signature conservée.
+    // Optimized BVH traversal (iterative, near-first). Signature kept.
     static bool RaycastAnyHit(BVHNode node, Vector3 origin, Vector3 dir, float maxDist)
     {
         if (node == null) return false;
 
-        // invDir pré-calculé (une fois par rayon)
+        // Precompute invDir (once per ray)
         var invDir = new Vector3(
             dir.X != 0f ? 1f / dir.X : float.PositiveInfinity,
             dir.Y != 0f ? 1f / dir.Y : float.PositiveInfinity,
             dir.Z != 0f ? 1f / dir.Z : float.PositiveInfinity
         );
 
-        // Petite pile itérative (évite la récursion)
+        // Small iterative stack (avoid recursion)
         const int InitialStack = 128;
         BVHNode[] stack = new BVHNode[InitialStack];
         int sp = 0;
 
-        // Rejeter si on ne touche pas la racine
+        // Reject if root not hit
         if (!RayIntersectsAABBInv(origin, dir, invDir, node.Min, node.Max, maxDist, out _)) return false;
 
         stack[sp++] = node;
@@ -425,14 +425,14 @@ public class VisCheck
                 continue;
             }
 
-            // Trier enfants par tNear pour maximiser l’early-out
+            // Sort children by tNear to maximize early-out
             float tL = 0f, tR = 0f;
             bool hitL = cur.Left != null && RayIntersectsAABBInv(origin, dir, invDir, cur.Left.Min, cur.Left.Max, maxDist, out tL);
             bool hitR = cur.Right != null && RayIntersectsAABBInv(origin, dir, invDir, cur.Right.Min, cur.Right.Max, maxDist, out tR);
 
             if (hitL && hitR)
             {
-                // Empile d’abord le plus loin pour traiter le plus proche en premier
+                // Push farther first so the nearer is processed first
                 if (tL <= tR)
                 {
                     stack[sp++] = cur.Right;
@@ -447,7 +447,7 @@ public class VisCheck
             else if (hitL) stack[sp++] = cur.Left;
             else if (hitR) stack[sp++] = cur.Right;
 
-            // Redimensionner si nécessaire (rare)
+            // Resize if needed (rare)
             if (sp >= stack.Length - 2)
             {
                 Array.Resize(ref stack, stack.Length * 2);
@@ -464,7 +464,7 @@ public class VisCheck
         const float EPSILON = 1e-6f;
         distance = 0;
 
-        // Edges pré-calculés (E1/E2)
+        // Precomputed edges (E1/E2)
         Vector3 h = Vector3.Cross(dir, tri.E2);
         float a = Vector3.Dot(tri.E1, h);
 

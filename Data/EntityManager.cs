@@ -1,5 +1,5 @@
 ﻿// Manages fetching and updating entities from memory.
-// I use locking for thread safety since updates happen in a loop.
+// Snapshot-swap model: replace whole references to avoid locks. Overlay reads but doesn't modify.
 // Also handles world to screen and bone reading.
 
 using System;
@@ -36,14 +36,14 @@ public class EntityManager
 
     private readonly Memory memory;  // Memory reader instance
 
-    // Passage à un modèle "snapshot swap": pas de lock, on remplace la référence en entier.
-    // L'overlay lit ces références sans les modifier.
+    // Switch to a "snapshot swap" model: no locks, replace reference atomically.
+    // The overlay reads these references without modifying them.
     private volatile Entity localPlayer;   // Local player snapshot
     private volatile List<Entity> entities; // Entities snapshot
-    private float[] cachedViewMatrix;  // Cached view matrix for W2S (par frame dans GetEntities)
+    private float[] cachedViewMatrix;  // Cached view matrix for W2S (per frame in GetEntities)
 
-    public Entity LocalPlayer => localPlayer;          // accès lock-free
-    public List<Entity> Entities => entities;          // accès lock-free (ne pas modifier côté appelant)
+    public Entity LocalPlayer => localPlayer;          // lock-free access
+    public List<Entity> Entities => entities;          // lock-free access (do not modify on caller side)
 
     public EntityManager(Memory memory)  // Constructor
     {
@@ -53,7 +53,7 @@ public class EntityManager
         cachedViewMatrix = new float[16];
     }
 
-    public Entity GetLocalPlayer()  // Fetch local player data (appelé par le thread d’update)
+    public Entity GetLocalPlayer()  // Fetch local player data (called by update thread)
     {
         IntPtr pawnPtr = memory.ReadPointer(memory.GetModuleBase() + Offsets.dwLocalPlayerPawn);
         if (pawnPtr == IntPtr.Zero) return new Entity();
@@ -72,7 +72,7 @@ public class EntityManager
         };
     }
 
-    public List<Entity> GetEntities()  // Fetch all entities (appelé par le thread d’update)
+    public List<Entity> GetEntities()  // Fetch all entities (called by update thread)
     {
         IntPtr moduleBase = memory.GetModuleBase();
         cachedViewMatrix = memory.ReadMatrix(moduleBase + Offsets.dwViewMatrix);
@@ -82,18 +82,18 @@ public class EntityManager
         IntPtr entityListPtr = memory.ReadPointer(moduleBase + Offsets.dwEntityList);
         if (entityListPtr == IntPtr.Zero)
         {
-            entities = entityList; // vide
+            entities = entityList; // empty
             return entities;
         }
 
         IntPtr listEntry = memory.ReadPointer(entityListPtr + 16);
         if (listEntry == IntPtr.Zero)
         {
-            entities = entityList; // vide
+            entities = entityList; // empty
             return entities;
         }
 
-        // Lire le local une seule fois
+        // Read local once
         Entity local = GetLocalPlayer();
 
         for (int j = 0; j < 64; j++)  // Loop through possible players (up to 64)
@@ -107,7 +107,7 @@ public class EntityManager
             IntPtr listEntry2 = memory.ReadPointer(entityListPtr, 8 * ((pawnHandle & 0x7FFF) >> 9) + 16);
             if (listEntry2 == IntPtr.Zero) continue;
 
-            // Éviter les retries + Sleep ici: si null, on passe
+            // Avoid retries + Sleep here: if null, skip
             IntPtr pawn = memory.ReadPointer(listEntry2, 120 * (pawnHandle & 0x1FF));
             if (pawn == IntPtr.Zero || pawn == local.PawnAddress) continue;
 
@@ -120,12 +120,12 @@ public class EntityManager
             if (ent != null) entityList.Add(ent);
         }
 
-        // Swap du snapshot (pas de copie)
+        // Swap snapshot (no copy)
         entities = entityList;
         return entities;
     }
 
-    // Ajout de team/health pour éviter de relire la mémoire
+    // Add team/health to avoid re-reading memory
     private Entity PopulateEntity(IntPtr pawnAddress, Entity localPlayer, int team, int health)  // Fill entity data
     {
         Vector3 pos = memory.ReadVec(pawnAddress, Offsets.m_vOldOrigin);
@@ -144,11 +144,13 @@ public class EntityManager
         IntPtr boneArray = memory.ReadPointer(sceneNode, Offsets.m_modelState + 128);
         if (boneArray == IntPtr.Zero) return null;
 
-        // Lecture des os + proj 2D
+        // Read bones + 2D projection
         List<Vector3> bones = ReadBones(boneArray);
         if (bones == null || bones.Count == 0) return null;
 
         List<Vector2> bones2D = ReadBones2D(bones, cachedViewMatrix, screenSize);
+        if (bones2D == null || bones2D.Count == 0) return null;
+
         if (bones2D == null || bones2D.Count == 0) return null;
 
         return new Entity
@@ -190,13 +192,13 @@ public class EntityManager
         entities = newEntities ?? new List<Entity>(0);
     }
 
-    public List<Vector3> ReadBones(IntPtr boneArray)  // Read bone positions from array (optimisé)
+    public List<Vector3> ReadBones(IntPtr boneArray)  // Read bone positions from array (optimized)
     {
         try
         {
-            // Lecture brute
+            // Raw read
             byte[] buffer = memory.ReadBytes(boneArray, 896);  // Bone data size
-            // Convertir en float[] une seule fois (évite BitConverter.ToSingle * N)
+            // Convert to float[] once (avoid BitConverter.ToSingle * N)
             int floatCount = buffer.Length / 4;
             float[] flts = new float[floatCount];
             Buffer.BlockCopy(buffer, 0, flts, 0, buffer.Length);

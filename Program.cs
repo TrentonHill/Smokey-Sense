@@ -48,12 +48,12 @@ internal static class Program
                 Console.Write("[i]: Starting Entity Manager!");
                 EntityManager entityManager = new EntityManager(memory);
 
-                // Thread de mise à jour (throttle via Stopwatch)
+                // Update thread (throttled via Stopwatch)
                 Thread updateThread = new Thread(() =>
                 {
                     Stopwatch sw = Stopwatch.StartNew();
-                    Stopwatch clk = Stopwatch.StartNew(); // horloge monotone pour throttle log
-                    long lastMainLogMs = -500;            // 1er log immédiat
+                    Stopwatch clk = Stopwatch.StartNew(); // monotonic clock for throttling logs
+                    long lastMainLogMs = -500;            // first log immediately
 
                     while (true)
                     {
@@ -75,13 +75,13 @@ internal static class Program
                             entityManager.UpdateLocalPlayer(local);
                             entityManager.UpdateEntities(entities);
 
-                            // Cap ~144 FPS (7 ms/frame)
+                            // Target ~144 FPS (7 ms/frame)
                             double workMs = sw.ElapsedTicks * 1000.0 / Stopwatch.Frequency;
                             const int targetMs = 7;
                             int sleepMs = (int)Math.Max(0, targetMs - Math.Ceiling(workMs));
                             if (sleepMs > 0) Thread.Sleep(sleepMs);
 
-                            // Throttle log à 500 ms, FPS basé sur durée réelle (travail + sleep)
+                            // Throttle logs every 500 ms; FPS based on actual loop time (work + sleep)
                             long nowMs = clk.ElapsedMilliseconds;
                             if (nowMs - lastMainLogMs >= 500)
                             {
