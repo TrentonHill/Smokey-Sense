@@ -27,9 +27,13 @@ public class VisCheck
     public struct Triangle
     {
         public Vector3 A, B, C;
+        // Edges pré-calculés (accélère l’intersection)
+        public Vector3 E1, E2;
+
         public Triangle(Vector3 a, Vector3 b, Vector3 c)
         {
             A = a; B = b; C = c;
+            E1 = B - A; E2 = C - A;
         }
     }
 
@@ -315,9 +319,9 @@ public class VisCheck
         if (p.X > max.X) max.X = p.X; if (p.Y > max.Y) max.Y = p.Y; if (p.Z > max.Z) max.Z = p.Z;
     }
 
-    // --- Ray vs Bounding Box intersection test (slabs) with precomputed invDir ---
+    // --- Ray vs Bounding Box intersection test (original, conservée) ---
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    static bool RayIntersectsAABB(Vector3 origin, Vector3 dir, Vector3 invDir, Vector3 min, Vector3 max, float maxDist, out float tNear)
+    static bool RayIntersectsAABB(Vector3 origin, Vector3 dir, Vector3 min, Vector3 max, float maxDist)
     {
         const float EPS = 1e-8f;
         float tmin = 0f;
@@ -326,19 +330,78 @@ public class VisCheck
         // X axis
         if (Math.Abs(dir.X) < EPS)
         {
+            if (origin.X < min.X || origin.X > max.X) return false;
+        }
+        else
+        {
+            float inv = 1f / dir.X;
+            float t0 = (min.X - origin.X) * inv;
+            float t1 = (max.X - origin.X) * inv;
+            if (t0 > t1) (t0, t1) = (t1, t0);
+            if (t0 > tmin) tmin = t0;
+            if (t1 < tmax) tmax = t1;
+            if (tmax <= tmin) return false;
+        }
+
+        // Y axis
+        if (Math.Abs(dir.Y) < EPS)
+        {
+            if (origin.Y < min.Y || origin.Y > max.Y) return false;
+        }
+        else
+        {
+            float inv = 1f / dir.Y;
+            float t0 = (min.Y - origin.Y) * inv;
+            float t1 = (max.Y - origin.Y) * inv;
+            if (t0 > t1) (t0, t1) = (t1, t0);
+            if (t0 > tmin) tmin = t0;
+            if (t1 < tmax) tmax = t1;
+            if (tmax <= tmin) return false;
+        }
+
+        // Z axis
+        if (Math.Abs(dir.Z) < EPS)
+        {
+            if (origin.Z < min.Z || origin.Z > max.Z) return false;
+        }
+        else
+        {
+            float inv = 1f / dir.Z;
+            float t0 = (min.Z - origin.Z) * inv;
+            float t1 = (max.Z - origin.Z) * inv;
+            if (t0 > t1) (t0, t1) = (t1, t0);
+            if (t0 > tmin) tmin = t0;
+            if (t1 < tmax) tmax = t1;
+            if (tmax <= tmin) return false;
+        }
+
+        return tmax > tmin && tmax >= 0f;
+    }
+
+    // Variante optimisée (slabs + invDir + tNear)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static bool RayIntersectsAABBInv(Vector3 origin, Vector3 dir, Vector3 invDir, Vector3 min, Vector3 max, float maxDist, out float tNear)
+    {
+        const float EPS = 1e-8f;
+        float tmin = 0f;
+        float tmax = maxDist;
+
+        // X
+        if (Math.Abs(dir.X) < EPS)
+        {
             if (origin.X < min.X || origin.X > max.X) { tNear = 0f; return false; }
         }
         else
         {
             float t0 = (min.X - origin.X) * invDir.X;
             float t1 = (max.X - origin.X) * invDir.X;
-            if (t0 > t1) (t0, t1) = (t1, t0);
+            if (t0 > t1) { var tmp = t0; t0 = t1; t1 = tmp; }
             if (t0 > tmin) tmin = t0;
             if (t1 < tmax) tmax = t1;
             if (tmax <= tmin) { tNear = 0f; return false; }
         }
 
-        // Y axis
+        // Y
         if (Math.Abs(dir.Y) < EPS)
         {
             if (origin.Y < min.Y || origin.Y > max.Y) { tNear = 0f; return false; }
@@ -347,13 +410,13 @@ public class VisCheck
         {
             float t0 = (min.Y - origin.Y) * invDir.Y;
             float t1 = (max.Y - origin.Y) * invDir.Y;
-            if (t0 > t1) (t0, t1) = (t1, t0);
+            if (t0 > t1) { var tmp = t0; t0 = t1; t1 = tmp; }
             if (t0 > tmin) tmin = t0;
             if (t1 < tmax) tmax = t1;
             if (tmax <= tmin) { tNear = 0f; return false; }
         }
 
-        // Z axis
+        // Z
         if (Math.Abs(dir.Z) < EPS)
         {
             if (origin.Z < min.Z || origin.Z > max.Z) { tNear = 0f; return false; }
@@ -362,7 +425,7 @@ public class VisCheck
         {
             float t0 = (min.Z - origin.Z) * invDir.Z;
             float t1 = (max.Z - origin.Z) * invDir.Z;
-            if (t0 > t1) (t0, t1) = (t1, t0);
+            if (t0 > t1) { var tmp = t0; t0 = t1; t1 = tmp; }
             if (t0 > tmin) tmin = t0;
             if (t1 < tmax) tmax = t1;
             if (tmax <= tmin) { tNear = 0f; return false; }
@@ -372,60 +435,74 @@ public class VisCheck
         return tmax > tmin && tmax >= 0f;
     }
 
-    // --- Ray traversal through BVH nodes (ordered by near hit) ---
+    // Traversée BVH optimisée (itérative, near-first). Signature conservée.
     static bool RaycastAnyHit(BVHNode node, Vector3 origin, Vector3 dir, float maxDist)
     {
         if (node == null) return false;
 
-        // Precompute 1/dir once per ray
+        // invDir pré-calculé (une fois par rayon)
         var invDir = new Vector3(
             dir.X != 0f ? 1f / dir.X : float.PositiveInfinity,
             dir.Y != 0f ? 1f / dir.Y : float.PositiveInfinity,
             dir.Z != 0f ? 1f / dir.Z : float.PositiveInfinity
         );
 
-        if (!RayIntersectsAABB(origin, dir, invDir, node.Min, node.Max, maxDist, out _)) return false;
+        // Petite pile itérative (évite la récursion)
+        const int InitialStack = 128;
+        BVHNode[] stack = new BVHNode[InitialStack];
+        int sp = 0;
 
-        if (node.IsLeaf)
+        // Rejeter si on ne touche pas la racine
+        if (!RayIntersectsAABBInv(origin, dir, invDir, node.Min, node.Max, maxDist, out _)) return false;
+
+        stack[sp++] = node;
+
+        while (sp > 0)
         {
-            var tris = node.Triangles;
-            for (int i = 0; i < tris.Count; i++)
+            var cur = stack[--sp];
+
+            if (!RayIntersectsAABBInv(origin, dir, invDir, cur.Min, cur.Max, maxDist, out _)) continue;
+
+            if (cur.IsLeaf)
             {
-                if (RayIntersectsTriangle(origin, dir, tris[i], out float dist))
+                var tris = cur.Triangles;
+                for (int i = 0; i < tris.Count; i++)
                 {
-                    if (dist > 0f && dist < maxDist) return true;
+                    if (RayIntersectsTriangle(origin, dir, tris[i], out float dist))
+                    {
+                        if (dist > 0f && dist < maxDist) return true;
+                    }
+                }
+                continue;
+            }
+
+            // Trier enfants par tNear pour maximiser l’early-out
+            float tL = 0f, tR = 0f;
+            bool hitL = cur.Left != null && RayIntersectsAABBInv(origin, dir, invDir, cur.Left.Min, cur.Left.Max, maxDist, out tL);
+            bool hitR = cur.Right != null && RayIntersectsAABBInv(origin, dir, invDir, cur.Right.Min, cur.Right.Max, maxDist, out tR);
+
+            if (hitL && hitR)
+            {
+                // Empile d’abord le plus loin pour traiter le plus proche en premier
+                if (tL <= tR)
+                {
+                    stack[sp++] = cur.Right;
+                    stack[sp++] = cur.Left;
+                }
+                else
+                {
+                    stack[sp++] = cur.Left;
+                    stack[sp++] = cur.Right;
                 }
             }
-            return false;
-        }
+            else if (hitL) stack[sp++] = cur.Left;
+            else if (hitR) stack[sp++] = cur.Right;
 
-        // Compute near distances for children and traverse closest first
-        float tNearL = 0f, tNearR = 0f;
-        bool hitL = node.Left != null && RayIntersectsAABB(origin, dir, invDir, node.Left.Min, node.Left.Max, maxDist, out tNearL);
-        bool hitR = node.Right != null && RayIntersectsAABB(origin, dir, invDir, node.Right.Min, node.Right.Max, maxDist, out tNearR);
-
-        if (hitL && hitR)
-        {
-            // Traverse the closer child first to maximize early-out chance
-            if (tNearL <= tNearR)
+            // Redimensionner si nécessaire (rare)
+            if (sp >= stack.Length - 2)
             {
-                if (RaycastAnyHit(node.Left, origin, dir, maxDist)) return true;
-                if (RaycastAnyHit(node.Right, origin, dir, maxDist)) return true;
+                Array.Resize(ref stack, stack.Length * 2);
             }
-            else
-            {
-                if (RaycastAnyHit(node.Right, origin, dir, maxDist)) return true;
-                if (RaycastAnyHit(node.Left, origin, dir, maxDist)) return true;
-            }
-            return false;
-        }
-        else if (hitL)
-        {
-            return RaycastAnyHit(node.Left, origin, dir, maxDist);
-        }
-        else if (hitR)
-        {
-            return RaycastAnyHit(node.Right, origin, dir, maxDist);
         }
 
         return false;
@@ -438,11 +515,9 @@ public class VisCheck
         const float EPSILON = 1e-6f;
         distance = 0;
 
-        Vector3 edge1 = tri.B - tri.A;
-        Vector3 edge2 = tri.C - tri.A;
-
-        Vector3 h = Vector3.Cross(dir, edge2);
-        float a = Vector3.Dot(edge1, h);
+        // Edges pré-calculés (E1/E2)
+        Vector3 h = Vector3.Cross(dir, tri.E2);
+        float a = Vector3.Dot(tri.E1, h);
 
         if (a > -EPSILON && a < EPSILON)
             return false; // ray is parallel to triangle
@@ -452,11 +527,11 @@ public class VisCheck
         float u = f * Vector3.Dot(s, h);
         if (u < 0.0 || u > 1.0) return false;
 
-        Vector3 q = Vector3.Cross(s, edge1);
+        Vector3 q = Vector3.Cross(s, tri.E1);
         float v = f * Vector3.Dot(dir, q);
         if (v < 0.0 || u + v > 1.0) return false;
 
-        float t = f * Vector3.Dot(edge2, q);
+        float t = f * Vector3.Dot(tri.E2, q);
         if (t > EPSILON)
         {
             distance = t;
