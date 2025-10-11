@@ -15,6 +15,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using Buffer = SharpDX.Direct3D11.Buffer;
 using Device = SharpDX.Direct3D11.Device;
@@ -23,6 +24,7 @@ using NumericsVector3 = System.Numerics.Vector3;
 using SharpDXVector3 = SharpDX.Vector3;
 using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
+using System.Collections.Concurrent;
 
 public class Overlay : IDisposable
 {
@@ -53,7 +55,8 @@ public class Overlay : IDisposable
     private int maxVertices = 65536; // capacité initiale (augmentée à la volée si nécessaire)
     private Vertex[] vertexStaging;
     private readonly List<Vertex> frameVertices = new List<Vertex>(4096);
-    private struct VisCacheEntry { public NumericsVector3 Pos; public bool Visible; public int Stamp; }
+    // Modifié: on stocke la position entité + locale
+    private struct VisCacheEntry { public NumericsVector3 EntPos; public NumericsVector3 LocalPos; public bool Visible; public int Stamp; }
     private readonly Dictionary<IntPtr, VisCacheEntry> visCache = new Dictionary<IntPtr, VisCacheEntry>(128);
 
     // Connections d’os statiques (évite l’allocation par frame)
@@ -380,7 +383,7 @@ public class Overlay : IDisposable
         while (true)
         {
             Console.Clear();
-            Console.WriteLine("\r\n     __                 _              __                     \r\n    / _\\_ __ ___   ___ | | _____ _   _/ _\\ ___ _ __   ___ ___ \r\n    \\ \\| '_ ` _ \\ / _ \\| |/ / _ \\ | | \\ \\ / _ \\ '_ \\ / __/ _ \\\r\n    _\\ \\ | | | | | (_) |   <  __/ |_| |\\ \\  __/ | | | (_|  __/\r\n    \\__/_| |_| |_|\\___/|_|\\_\\___|\\__, \\__/\\___|_| |_|\\___\\___| v1.2 BETA\r\n                                 |___/                        ");
+            Console.WriteLine("\r\n     __                 _              __                     \r\n    / _\\_ __ ___   ___ | | _____ _   _/ _\\ ___ _ __   ___ ___ \r\n    \\ \\| '_ ` _ \\ / _ \\| |/ / _ \\ | | \\ \\ / _ \\ '_ \\ / __/ _ \\r\n    _\\ \\ | | | | | (_) |   <  __/ |_| |\\ \\  __/ | | | (_|  __/\r\n    \\__/_| |_| |_|\\___/|_|\\_\\___|\\__, \\__/\\___|_| |_|\\___\\___| v1.2 BETA\r\n                                 |___/                        ");
             if (Functions.BoxESPEnabled) { Console.WriteLine($"\n[1]: BoxESP (ON)"); } else { Console.WriteLine($"\n[1]: BoxESP (OFF)"); }
             if (Functions.BoneESPEnabled) { Console.WriteLine($"[2]: BoneESP (ON)"); } else { Console.WriteLine($"[2]: BoneESP (OFF)"); }
             if (Functions.AimAssistEnabled) { Console.WriteLine($"[3]: AimAssist (ON)"); } else { Console.WriteLine($"[3]: AimAssist (OFF)"); }
@@ -408,7 +411,7 @@ public class Overlay : IDisposable
 
     private void RenderLoop()
     {
-            Stopwatch sw = Stopwatch.StartNew();
+        Stopwatch sw = Stopwatch.StartNew();
         while (running)
         {
             sw.Restart();
@@ -466,6 +469,14 @@ public class Overlay : IDisposable
             bool visMeasured = false;
             int nowTick = Environment.TickCount;
 
+            // 1) Prépare les boîtes et décide qui a besoin d'un vischeck (cache TTL)
+            var boxes = new List<(Entity ent, float nx1, float ny1, float nx2, float ny2, bool? cachedVisible)>(ents.Count);
+            var toCompute = new List<Entity>(32);
+
+            // Seuils (au carré) pour invalider sur mouvement
+            const float entPosEpsSq = 0.01f;   // ~1 cm^2 si unités = mètres (à ajuster)
+            const float localPosEpsSq = 0.01f; // idem pour le joueur local
+
             foreach (Entity ent in ents)
             {
                 if (ent.PawnAddress == IntPtr.Zero || ent.health <= 0 || ent.team == local.team) continue;
@@ -502,51 +513,90 @@ public class Overlay : IDisposable
                     if (boxX < 0 || boxY < 0 || boxX + boxWidth > width || boxY + boxHeight > height)
                         continue;
 
-                    // Visibilité (avec cache TTL 75ms + seuil de mouvement)
-                    bool visible;
-                    VisCacheEntry cached;
-                    if (visCache.TryGetValue(ent.PawnAddress, out cached)
-                        && (nowTick - cached.Stamp) <= 75
-                        && NumericsVector3.DistanceSquared(cached.Pos, ent.position) <= 0.01f)
-                    {
-                        visible = cached.Visible;
-                    }
-                    else
-                    {
-                        if (!visMeasured)
-                        {
-                            var swv = Stopwatch.StartNew();
-                            visible = VisCheck.IsVisible(local.position, ent.position);
-                            swv.Stop();
-                            visCheckMs = swv.ElapsedMilliseconds;
-                            visMeasured = true;
-                        }
-                        else
-                        {
-                            visible = VisCheck.IsVisible(local.position, ent.position);
-                        }
-                        visCache[ent.PawnAddress] = new VisCacheEntry { Pos = ent.position, Visible = visible, Stamp = nowTick };
-                    }
-
-                    // NDC
+                    // NDC immédiat
                     float nx1 = (boxX / width) * 2f - 1f;
                     float ny1 = 1f - (boxY / height) * 2f;
                     float nx2 = ((boxX + boxWidth) / width) * 2f - 1f;
                     float ny2 = 1f - ((boxY + boxHeight) / height) * 2f;
 
-                    var drawColor = visible ? colorVisible : colorHidden;
-                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = drawColor });
-                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = drawColor });
-                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny1, 0), Color = drawColor });
-                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = drawColor });
-                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = drawColor });
-                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = drawColor });
-                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny2, 0), Color = drawColor });
-                    frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = drawColor });
+                    // Cache TTL 75ms + seuil mouvement (entité ET joueur local)
+                    bool? cachedVisible = null;
+                    VisCacheEntry cached;
+                    if (visCache.TryGetValue(ent.PawnAddress, out cached)
+                        && (nowTick - cached.Stamp) <= 75
+                        && NumericsVector3.DistanceSquared(cached.EntPos, ent.position) <= entPosEpsSq
+                        && NumericsVector3.DistanceSquared(cached.LocalPos, local.position) <= localPosEpsSq
+                        )
+                    {
+                        cachedVisible = cached.Visible;
+                    }
+                    else
+                    {
+                        toCompute.Add(ent);
+                    }
+
+                    boxes.Add((ent, nx1, ny1, nx2, ny2, cachedVisible));
                 }
 
-                if (Functions.BoneESPEnabled && ent.bones2D != null && ent.bones2D.Count > 0)
+                if (Functions.AimAssistEnabled && ent.head2D.X != -99f && ent.head2D.Y != -99f &&
+                    !float.IsNaN(ent.head2D.X) && !float.IsNaN(ent.head2D.Y))
                 {
+                    float distToCenter = NumericsVector2.Distance(screenCenter, ent.head2D);
+                    float fovRadius = Functions.AimAssistFOVSize * 20f;
+                    if (distToCenter <= fovRadius && distToCenter < minDist)
+                    {
+                        minDist = distToCenter;
+                        closestTarget = ent;
+                    }
+                }
+            }
+
+            // 2) VisCheck parallèle pour ceux qui ne sont pas en cache
+            var visResults = new ConcurrentDictionary<IntPtr, bool>();
+            if (toCompute.Count > 0)
+            {
+                var swv = Stopwatch.StartNew();
+                Parallel.ForEach(
+                    toCompute,
+                    new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1) },
+                    ent =>
+                    {
+                        bool v = VisCheck.IsVisible(local.position, ent.position);
+                        visResults[ent.PawnAddress] = v;
+                    });
+                swv.Stop();
+                visCheckMs = swv.ElapsedMilliseconds;
+                visMeasured = true;
+            }
+
+            // 3) Ajoute les vertices en utilisant les résultats (cache + parallèles)
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                var item = boxes[i];
+                bool visible = item.cachedVisible ?? visResults.GetOrAdd(item.ent.PawnAddress, _ => true);
+
+                // Met à jour le cache (thread unique ici) avec entité ET local
+                visCache[item.ent.PawnAddress] = new VisCacheEntry { EntPos = item.ent.position, LocalPos = local.position, Visible = visible, Stamp = nowTick };
+
+                var drawColor = visible ? colorVisible : colorHidden;
+                frameVertices.Add(new Vertex { Position = new SharpDXVector3(item.nx1, item.ny1, 0), Color = drawColor });
+                frameVertices.Add(new Vertex { Position = new SharpDXVector3(item.nx2, item.ny1, 0), Color = drawColor });
+                frameVertices.Add(new Vertex { Position = new SharpDXVector3(item.nx2, item.ny1, 0), Color = drawColor });
+                frameVertices.Add(new Vertex { Position = new SharpDXVector3(item.nx2, item.ny2, 0), Color = drawColor });
+                frameVertices.Add(new Vertex { Position = new SharpDXVector3(item.nx2, item.ny2, 0), Color = drawColor });
+                frameVertices.Add(new Vertex { Position = new SharpDXVector3(item.nx1, item.ny2, 0), Color = drawColor });
+                frameVertices.Add(new Vertex { Position = new SharpDXVector3(item.nx1, item.ny2, 0), Color = drawColor });
+                frameVertices.Add(new Vertex { Position = new SharpDXVector3(item.nx1, item.ny1, 0), Color = drawColor });
+            }
+
+            // Bones (séquentiel, faible coût et inchangé)
+            if (Functions.BoneESPEnabled)
+            {
+                foreach (Entity ent in ents)
+                {
+                    if (ent.PawnAddress == IntPtr.Zero || ent.health <= 0 || ent.team == local.team) continue;
+                    if (ent.bones2D == null || ent.bones2D.Count == 0) continue;
+
                     for (int i = 0; i < BoneConnections.Length; i++)
                     {
                         var (b1, b2) = BoneConnections[i];
@@ -565,18 +615,6 @@ public class Overlay : IDisposable
 
                         frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx1, ny1, 0), Color = colorSelected });
                         frameVertices.Add(new Vertex { Position = new SharpDXVector3(nx2, ny2, 0), Color = colorSelected });
-                    }
-                }
-
-                if (Functions.AimAssistEnabled && ent.head2D.X != -99f && ent.head2D.Y != -99f &&
-                    !float.IsNaN(ent.head2D.X) && !float.IsNaN(ent.head2D.Y))
-                {
-                    float distToCenter = NumericsVector2.Distance(screenCenter, ent.head2D);
-                    float fovRadius = Functions.AimAssistFOVSize * 20f;
-                    if (distToCenter <= fovRadius && distToCenter < minDist)
-                    {
-                        minDist = distToCenter;
-                        closestTarget = ent;
                     }
                 }
             }
