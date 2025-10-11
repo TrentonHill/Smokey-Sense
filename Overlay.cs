@@ -712,6 +712,66 @@ public class Overlay : IDisposable
                 deviceContext.Draw(vertexCount, 0);
             }
 
+            if (Functions.AimAssistEnabled)
+            {
+
+            }
+
+            if (Functions.RecoilControlEnabled)
+            {
+                //float Strength = 100f; // percent (1 == 100%, 0.5 == 50%)
+                //float Smoothing = 5f;
+
+                //// read punch angle
+                //Vector3 rawPunch = memory.ReadVec(local.PawnAddress + Offsets.m_aimPunchAngle);
+                //Console.WriteLine($"[RCS DEBUG] Raw m_aimPunchAngle: {rawPunch}");
+                //Vector3 punch = rawPunch * Strength / 100f * 2f;
+
+                //int shotsFired = memory.ReadInt(local.PawnAddress, Offsets.shotsFired);
+                //Console.WriteLine($"[RCS DEBUG] ShotsFired: {shotsFired}");
+
+                //if (shotsFired > 1)
+                //{
+                //    Vector3 currentAngles = memory.ReadVec(memory.GetModuleBase(), Offsets.dwViewAngles);
+
+                //    // delta between previous punch and current punch
+                //    Vector3 deltaPunch = punch - OldPunch;
+
+                //    // calculate new angles
+                //    Vector3 newAngles = currentAngles - deltaPunch;
+                //    newAngles.X = Normalize(newAngles.X);
+                //    newAngles.Y = Normalize(newAngles.Y);
+
+                //    // compute float dx/dy before rounding
+                //    float dxFloat = (newAngles.X - currentAngles.X); // no / Smoothing
+                //    float dyFloat = (newAngles.Y - currentAngles.Y);
+
+                //    int dx = (int)(dxFloat * 50f); // scale up for testing
+                //    int dy = (int)(dyFloat * 50f);
+
+                //    // debug logging
+                //    Console.WriteLine($"[RCS DEBUG] CurrentAngles: {currentAngles}");
+                //    Console.WriteLine($"[RCS DEBUG] Punch: {punch}, OldPunch: {OldPunch}, DeltaPunch: {deltaPunch}");
+                //    Console.WriteLine($"[RCS DEBUG] NewAngles (after normalize): {newAngles}");
+                //    Console.WriteLine($"[RCS DEBUG] dxFloat: {dxFloat:F4}, dyFloat: {dyFloat:F4}, dx: {dx}, dy: {dy}");
+
+                //    // apply mouse move if non-zero
+                //    if (dx != 0 || dy != 0)
+                //    {
+                //        MoveMouse(dx, dy);
+                //        Console.WriteLine("[RCS DEBUG] MoveMouse called");
+                //    }
+                //    else
+                //    {
+                //        Console.WriteLine("[RCS DEBUG] dx/dy == 0 (no movement this tick)");
+                //    }
+                //}
+
+                //// store last punch for next frame
+                //OldPunch = punch;
+                //Console.WriteLine($"[RCS DEBUG] OldPunch updated: {OldPunch}");
+            }
+
             swapChain.Present(0, PresentFlags.None);
         }
         catch (Exception ex)
