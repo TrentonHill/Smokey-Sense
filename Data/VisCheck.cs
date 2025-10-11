@@ -152,7 +152,7 @@ public class VisCheck
 
         string basePath = AppDomain.CurrentDomain.BaseDirectory;
         string exportPath = Path.Combine(basePath, "MapData");
-        string csGoPath = @"D:\SteamLibrary\steamapps\common\Counter-Strike Global Offensive";
+        string csGoPath = @"H:\Steam\steamapps\common\Counter-Strike Global Offensive";
 
         // Command to run Source2Viewer-CLI to extract and export map geometry as .glb
         string exportCommand =
